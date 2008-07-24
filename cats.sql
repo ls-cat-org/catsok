@@ -5,7 +5,7 @@ GRANT USAGE ON SCHEMA cats TO PUBLIC;
 --
 -- Status
 --
-create table cats.states (
+CREATE TABLE cats.states (
        csKey serial primary key,
        csTSStart timestamp with time zone default now(),
        csTSLast  timestamp with time zone default now(),
@@ -32,7 +32,7 @@ CREATE OR REPLACE FUNCTION cats.statesInsertTF() returns trigger as $$
   DECLARE
     t RECORD;
   BEGIN
-    SELECT * INTO t FROM cats.state ORDER BY csTSLast DESC LIMIT 1;
+    SELECT * INTO t FROM cats.states ORDER BY csTSLast DESC LIMIT 1;
     IF FOUND THEN
       IF
         t.csPower = NEW.csPower AND
@@ -116,7 +116,7 @@ ALTER FUNCTION cats.setstate (
 
 
 
-CREATE OR REPLACE FUNCTION cats.setStateLast() returns void as $$
+CREATE OR REPLACE FUNCTION cats.setState() returns void as $$
   DECLARE
     k bigint;
   BEGIN
@@ -127,10 +127,10 @@ CREATE OR REPLACE FUNCTION cats.setStateLast() returns void as $$
     return;
   END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
-ALTER FUNCTION cats.setStateLast() OWNER TO lsadmin;
+ALTER FUNCTION cats.setState() OWNER TO lsadmin;
 
 
-create table cats.io (
+CREATE TABLE cats.io (
        ioKey serial primary key,
        ioTSStart timestamp with time zone default now(),
        ioTSLast  timestamp with time zone default now(),
@@ -459,7 +459,7 @@ ALTER FUNCTION cats.setio(
        Unlabed5 boolean	-- 47 Usage not documented
 ) OWNER TO lsadmin;
 
-CREATE OR REPLACE FUNCTION cats.setIOLast() returns void as $$
+CREATE OR REPLACE FUNCTION cats.setIO() returns void as $$
   DECLARE
     k bigint;
   BEGIN
@@ -470,21 +470,22 @@ CREATE OR REPLACE FUNCTION cats.setIOLast() returns void as $$
     return;
   END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
-ALTER FUNCTION cats.setIOLast() OWNER TO lsadmin;
+ALTER FUNCTION cats.setIO() OWNER TO lsadmin;
 
 
-create table cats.positions (
+CREATE TABLE cats.positions (
        pKey serial primary key,
        pTSStart timestamp with time zone default now(),
        pTSLast  timestamp with time zone default now(),
 
-       pX float,
-       pY float,
-       pZ float,
-       pRX float,
-       pRY float,
-       pRZ float
+       pX numeric(20,6),
+       pY numeric(20,6),
+       pZ numeric(20,6),
+       pRX numeric(20,6),
+       pRY numeric(20,6),
+       pRZ numeric(20,6)
 );
+ALTER TABLE cats.positions OWNER TO lsadmin;
 
 CREATE OR REPLACE FUNCTION cats.positionsInsertTF() returns trigger as $$
   DECLARE
@@ -511,15 +512,15 @@ ALTER FUNCTION cats.positionsInsertTF() OWNER TO lsadmin;
 
 CREATE TRIGGER positionsInsertTrigger BEFORE INSERT ON cats.positions FOR EACH ROW EXECUTE PROCEDURE cats.positionsInsertTF();
 
-CREATE OR REPLACE FUNCTION cats.setposition( x float, y float, z float, rx float, ry float, rz float) returns int as $$
+CREATE OR REPLACE FUNCTION cats.setposition( x numeric(20,6), y numeric(20,6), z numeric(20,6), rx numeric(20,6), ry numeric(20,6), rz numeric(20,6)) returns int as $$
   BEGIN
     INSERT INTO cats.positions ( pX, pY, pZ, pRX, pRY, pRZ) VALUES ( x, y, z, rx, ry, rz);
     RETURN 1;
   END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
-ALTER FUNCTION cats.setposition( float, float, float, float, float, float) OWNER TO lsadmin;
+ALTER FUNCTION cats.setposition( numeric(20,6), numeric(20,6), numeric(20,6), numeric(20,6), numeric(20,6), numeric(20,6)) OWNER TO lsadmin;
 
-CREATE OR REPLACE FUNCTION cats.setPositionLast() returns void as $$
+CREATE OR REPLACE FUNCTION cats.setPosition() returns void as $$
   DECLARE
     k bigint;
   BEGIN
@@ -530,15 +531,16 @@ CREATE OR REPLACE FUNCTION cats.setPositionLast() returns void as $$
     RETURN;
   END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
-ALTER FUNCTION cats.setPositionLast() OWNER TO lsadmin;
+ALTER FUNCTION cats.setPosition() OWNER TO lsadmin;
 
-create table cats.messages (
+CREATE TABLE cats.messages (
        mKey serial primary key,
        mTSStart timestamp with time zone default now(),
        mTSLast timestamp with time zone default now(),
        
        mmsg text
 );
+ALTER TABLE cats.messages OWNER TO lsadmin;
 
 CREATE OR REPLACE FUNCTION cats.messagesInsertTF() returns trigger as $$
   DECLARE
@@ -564,7 +566,7 @@ CREATE OR REPLACE FUNCTION cats.setmessage( msg text) returns int as $$
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 ALTER FUNCTION cats.setmessage( text) OWNER TO lsadmin;
 
-CREATE OR REPLACE FUNCTION cats.setMessageLast() returns void as $$
+CREATE OR REPLACE FUNCTION cats.setMessage() returns void as $$
   DECLARE
     k bigint;
   BEGIN
@@ -575,4 +577,4 @@ CREATE OR REPLACE FUNCTION cats.setMessageLast() returns void as $$
   END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
-ALTER FUNCTION cats.setMessageLast() OWNER TO lsadmin;
+ALTER FUNCTION cats.setMessage() OWNER TO lsadmin;
