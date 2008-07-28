@@ -578,3 +578,319 @@ CREATE OR REPLACE FUNCTION cats.setMessage() returns void as $$
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
 ALTER FUNCTION cats.setMessage() OWNER TO lsadmin;
+
+
+CREATE TABLE cats._queue (
+       qKey serial primary key,		-- our key
+       qts timestamp with time zone not null default now(),
+       qaddr inet not null,		-- IP address of catsOK routine
+       qCmd text not null		-- the command
+);
+ALTER TABLE cats._queue OWNER TO lsadmin;
+       
+CREATE OR REPLACE FUNCTION cats._pushqueue( cmd text) RETURNS VOID AS $$
+  DECLARE
+    c text;	-- trimmed command
+    ntfy text;	-- used to generate notify command
+  BEGIN
+    SELECT cnotifyrobot INTO ntfy FROM px._config LEFT JOIN px.stations ON cstation=stnname WHERE stnkey=px.getstation();
+    IF NOT FOUND THEN
+      RETURN;
+    END IF;
+    c := trim( cmd);
+    IF length( c) > 0 THEN
+      INSERT INTO cats._queue (qcmd, qaddr)
+        SELECT c, crobot
+          FROM px._config
+          WHERE cdiffractometer=inet_client_addr() or cdetector=inet_client_addr() or crobot=inet_client_addr()
+          LIMIT 1;
+      IF FOUND THEN
+        EXECUTE 'NOTIFY ' || ntfy;
+      END IF;
+    END IF;
+    RETURN;
+  END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+ALTER FUNCTION cats._pushqueue( text) OWNER TO lsadmin;
+
+CREATE OR REPLACE FUNCTION cats._popqueue() RETURNS TEXT AS $$
+  DECLARE
+    rtn text;		-- return value
+    qk   bigint;	-- queue key of item
+  BEGIN
+    rtn := '';
+    SELECT qCmd, qKey INTO rtn, qk FROM cats._queue WHERE qaddr=inet_client_addr() ORDER BY qKey ASC LIMIT 1;
+    IF NOT FOUND THEN
+      return '';
+    END IF;
+    DELETE FROM cats._queue WHERE qKey=qk;
+    return rtn;
+  END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+ALTER FUNCTION cats._popqueue() OWNER TO lsadmin;
+
+
+CREATE OR REPLACE FUNCTION cats.init() RETURNS VOID AS $$
+  --
+  -- Called by process controlling the robot
+  --
+  DECLARE
+  BEGIN
+    DELETE FROM cats._queue WHERE qaddr = inet_client_addr();    
+  END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+ALTER FUNCTION cats.init() OWNER TO lsadmin;
+
+
+CREATE TABLE cats._acmds (
+	-- CATS commands that require an argument
+       ac text primary key
+);
+INSERT INTO cats._acmds (ac) VALUES ('backup');
+INSERT INTO cats._acmds (ac) VALUES ('restore');
+INSERT INTO cats._acmds (ac) VALUES ('home');
+INSERT INTO cats._acmds (ac) VALUES ('safe');
+INSERT INTO cats._acmds (ac) VALUES ('reference');
+INSERT INTO cats._acmds (ac) VALUES ('put');
+INSERT INTO cats._acmds (ac) VALUES ('put_bcrd');
+INSERT INTO cats._acmds (ac) VALUES ('get');
+INSERT INTO cats._acmds (ac) VALUES ('get_bcrd');
+INSERT INTO cats._acmds (ac) VALUES ('getput');
+INSERT INTO cats._acmds (ac) VALUES ('getput_bcrd');
+INSERT INTO cats._acmds (ac) VALUES ('barcode');
+INSERT INTO cats._acmds (ac) VALUES ('transfer');
+INSERT INTO cats._acmds (ac) VALUES ('soak');
+INSERT INTO cats._acmds (ac) VALUES ('dry');
+INSERT INTO cats._acmds (ac) VALUES ('putplate');
+INSERT INTO cats._acmds (ac) VALUES ('getplate');
+INSERT INTO cats._acmds (ac) VALUES ('getputplate');
+INSERT INTO cats._acmds (ac) VALUES ('goto_well');
+INSERT INTO cats._acmds (ac) VALUES ('adjust');
+INSERT INTO cats._acmds (ac) VALUES ('focus');
+INSERT INTO cats._acmds (ac) VALUES ('expose');
+INSERT INTO cats._acmds (ac) VALUES ('collect');
+INSERT INTO cats._acmds (ac) VALUES ('setplateangle');
+
+
+CREATE TABLE cats._args (
+       -- Used to generate argument lists for CATS control functions
+       aKey serial primary key,
+       aTS timestamp with time zone default now(),
+       aCmd text NOT NULL references cats._acmds (ac) on update cascade,	-- here are the legal commands       
+       aCap int default 0,		-- USB port or tool number
+       aLid int default 0,		-- lid number (AKA dewar nuber)
+       aSample int default 0,		-- sample number within dewar
+       aNewLid int default 0,		-- new lid to which to transfer sample
+       aNewSample int default 0,	-- new sample position to transfer to
+       aXtalPlate int default 0,	-- Crystallization plate number
+       aWell int default 0,		-- number of well to go to
+       aArg7 int default 0,		-- spare argument
+       aArg8 int default 0,		-- spare argument
+       aArg9 int default 0,		-- spare argument
+       aXShift float default 0.0,	-- X offset
+       aYShift float default 0.0,	-- Y offset
+       aZShift float default 0.0,	-- Z offset
+       aAngle float default 0.0,	-- Angle
+       aOscs int default 0,		-- number of oscillations
+       aExp float default 0.0,		-- exposure time
+       aStep float default 0.0,		-- angular step
+       aFinal float default 0.0,	-- Final Angle
+       aArg18 int default 0,		-- spare argument
+       aArg19 int default 0		-- spare argument
+);
+ALTER TABLE cats._args OWNER TO lsadmin;
+
+CREATE OR REPLACE FUNCTION cats._gencmd( k bigint) returns text as $$
+  DECLARE
+    rtn text;
+  BEGIN
+    rtn := '';
+    SELECT aCmd || '(' || aCap || ',' || aLid || ',' || aSample || ',' || aNewLid || ',' || aNewSample || ',' ||
+        aXtalPlate || ',' || aWell || ',' || aArg7 || ',' || aArg8 || ',' || aArg9 || ',' || 
+        aXShift || ',' || aYShift || ',' || aZShift || ',' || aAngle || ',' || 
+        aOscs || ',' || aExp || ',' || aStep || ',' || aFinal || ',' || aArg18 || ',' || aArg19 || ')'
+      INTO rtn
+      FROM cats._args
+      WHERE aKey = k;
+    IF FOUND THEN
+      DELETE FROM cats._args WHERE aKey=k;
+    END IF;
+    return rtn;
+  END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+ALTER FUNCTION cats._gencmd( bigint) OWNER TO lsadmin;
+
+CREATE TABLE cats._cylinder2tool (
+       ctKey serial primary key,	-- our primary key
+       ctcyl int unique,		-- our normalized cylinder number (1-255) Must be unique as we'll expect one and only one row give a cylinder number
+       ctoff int,			-- offset to a zero based cylinder number (0-2)
+       ctnsamps int,			-- number of sample positions in this cylinder
+       cttoolno int,			-- the CATS tool number needed to access this cylinder
+       cttoolname text			-- the name of the corresponding CATS tool (control requires number, status replies with name)
+);
+
+INSERT INTO cats._cylinder2tool (ctcyl, ctoff, ctnsamps, cttoolno, cttoolname) VALUES (  1,  1, 10, 1, 'SPINE');
+INSERT INTO cats._cylinder2tool (ctcyl, ctoff, ctnsamps, cttoolno, cttoolname) VALUES (  2,  1, 10, 1, 'SPINE');
+INSERT INTO cats._cylinder2tool (ctcyl, ctoff, ctnsamps, cttoolno, cttoolname) VALUES (  3,  1, 10, 1, 'SPINE');
+INSERT INTO cats._cylinder2tool (ctcyl, ctoff, ctnsamps, cttoolno, cttoolname) VALUES (  4,  4, 12, 3, 'Rigaku');
+INSERT INTO cats._cylinder2tool (ctcyl, ctoff, ctnsamps, cttoolno, cttoolname) VALUES (  5,  4, 12, 3, 'Rigaku');
+INSERT INTO cats._cylinder2tool (ctcyl, ctoff, ctnsamps, cttoolno, cttoolname) VALUES (  6,  4, 12, 3, 'Rigaku');
+INSERT INTO cats._cylinder2tool (ctcyl, ctoff, ctnsamps, cttoolno, cttoolname) VALUES (  7,  7, 16, 4, 'ALS');
+INSERT INTO cats._cylinder2tool (ctcyl, ctoff, ctnsamps, cttoolno, cttoolname) VALUES (  8,  7, 16, 4, 'ALS');
+INSERT INTO cats._cylinder2tool (ctcyl, ctoff, ctnsamps, cttoolno, cttoolname) VALUES (  9,  7, 16, 4, 'ALS');
+INSERT INTO cats._cylinder2tool (ctcyl, ctoff, ctnsamps, cttoolno, cttoolname) VALUES ( 10, 10, 16, 5, 'UNI');
+INSERT INTO cats._cylinder2tool (ctcyl, ctoff, ctnsamps, cttoolno, cttoolname) VALUES ( 11, 10, 16, 5, 'UNI');
+INSERT INTO cats._cylinder2tool (ctcyl, ctoff, ctnsamps, cttoolno, cttoolname) VALUES ( 12, 10, 16, 5, 'UNI');
+
+
+CREATE OR REPLACE FUNCTION cats._mkcryocmd( theCmd text, theId int, theNewId int) RETURNS INT AS $$
+  --
+  -- All the cryocrystallography commands have very similar requirements
+  -- This is a low level function to service the put, get, (and getput), as well as the brcd flavors
+  -- Also, the barcode, transfer, soak, dry, home, safe, and reference commands are supported here
+  --
+  DECLARE
+    rtn int;	-- return: 1 on success, 0 on failure
+	--
+	-- Convert theId so something the robot can use
+    cstn1 int;	-- control system's station number
+    cdwr1 int;	-- control system's dewar number
+    ccyl1 int;	-- control system's cylinder number
+    csmp1 int;	-- control system's sample number
+    rlid1 int;	-- robot's lid number
+    rtool1 int;	-- robot's tool number
+    rsmpl1 int;	-- robot's sample number
+
+    cstn2 int;	-- control system's station number
+    cdwr2 int;	-- control system's dewar number
+    ccyl2 int;	-- control system's cylinder number
+    csmp2 int;	-- control system's sample number
+    rlid2 int;	-- robot's lid number
+    rtool2 int;	-- robot's tool number
+    rsmpl2 int;	-- robot's sample number
+
+  BEGIN
+    rtn := 0;
+
+    INSERT INTO cats._args (aCmd) VALUES ( theCmd);
+
+    IF theId != 0 THEN
+      --
+      -- Pick out the control system's numbers
+      -- home, safe, get, soak, and dry need at least an ID corresponding to a cylinder to choose the right tool
+      --
+      cstn1 := (theId & x'ff000000'::int) >> 24;
+      cdwr1 := (theId & x'00ff0000'::int) >> 16;
+      ccyl1 := (theId & x'0000ff00'::int) >>  8;
+      csmp1 :=  theId & x'000000ff'::int;
+      --
+      -- Find the Robot's numbers
+      --
+      -- 1 = current tool, 2 = diffractometer, 3-5 = lids
+      -- For now only allow references to lid positions in the CATS dewar
+      IF cdwr1 < 3 or cdwr1 > 5 THEN
+        return 0;
+      END IF;
+      rlid1 := cdwr1 - 2;
+
+      SELECT cttoolno, (ccyl-ctoff)*ctnsamps + csmp INTO rtool1, rsmpl1 FROM cats._cylinder2tool WHERE ctcyl=ccyl1;
+      IF NOT FOUND THEN
+        return 0;
+      END IF;
+      -- Now we know what we want
+      UPDATE cats._args SET aCap=rtool1, aLid=rlid1, aSample=rsmpl1 WHERE akey=currval('cats._args_akey_seq');
+    END IF;
+
+    IF theId != 0 and theNewId != 0 THEN
+      --
+      -- Pick out the control system's numbers
+      --
+      cstn2 := (theNewId & x'ff000000'::int) >> 24;
+      cdwr2 := (theNewId & x'00ff0000'::int) >> 16;
+      ccyl2 := (theNewId & x'0000ff00'::int) >>  8;
+      csmp2 :=  theNewId & x'000000ff'::int;
+      --
+      -- Find the Robot's numbers
+      --
+      -- 1 = current tool, 2 = diffractometer, 3-5 = lids
+      -- For now only allow reference to position in the CATS dewar
+      IF cdwr2 < 3 or cdwr2 > 5 THEN
+        return 0;
+      END IF;
+      rlid2 := cdwr2 - 2;
+
+      SELECT cttoolno, (ccyl2-ctoff2)*ctnsamps + csmp2 INTO rtool2, rsmpl2 FROM cats._cylinder2tool WHERE ctcyl=ccyl2;
+      IF NOT FOUND OR rtool1 != rtool2 THEN
+        return 0;
+      END IF;
+      -- Now we know what we want
+      UPDATE cats._args SET aNewLid=rlid2, aNewSample=rsmpl2 WHERE akey=currval('cats._args_akey_seq');
+    END IF;
+
+
+    PERFORM cats._pushqueue( cats._gencmd( currval( 'cats._args_akey_seq')));
+    return 1;
+  END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+ALTER FUNCTION cats._mkcryocmd( text, int, int) OWNER TO lsadmin;
+
+CREATE OR REPLACE FUNCTION cats.put( theId int) returns VOID AS $$
+  SELECT cats._mkcryocmd( 'put', $1, 0);
+$$ LANGUAGE sql SECURITY DEFINER;
+ALTER FUNCTION cats.put( int) OWNER TO lsadmin;
+
+CREATE OR REPLACE FUNCTION cats.put_bcrd( theId int) returns int AS $$
+  SELECT cats._mkcryocmd( 'put_bcrd', $1, 0);
+$$ LANGUAGE sql SECURITY DEFINER;
+ALTER FUNCTION cats.put_bcrd( int) OWNER TO lsadmin;
+
+CREATE OR REPLACE FUNCTION cats.get( theId int) returns int AS $$
+  SELECT cats._mkcryocmd( 'get', $1, 0);
+$$ LANGUAGE sql SECURITY DEFINER;
+ALTER FUNCTION cats.get( int) OWNER TO lsadmin;
+
+CREATE OR REPLACE FUNCTION cats.getput( theId int) returns int AS $$
+  SELECT cats._mkcryocmd( 'getput', $1, 0);
+$$ LANGUAGE sql SECURITY DEFINER;
+ALTER FUNCTION cats.getput( int) OWNER TO lsadmin;
+
+CREATE OR REPLACE FUNCTION cats.getput_bcrd( theId int) returns int AS $$
+  SELECT cats._mkcryocmd( 'getput_bcrd', $1, 0);
+$$ LANGUAGE sql SECURITY DEFINER;
+ALTER FUNCTION cats.getput_bcrd( int) OWNER TO lsadmin;
+
+CREATE OR REPLACE FUNCTION cats.barcode( theId int) returns int AS $$
+  SELECT cats._mkcryocmd( 'barcode', $1, 0);
+$$ LANGUAGE sql SECURITY DEFINER;
+ALTER FUNCTION cats.barcode( int) OWNER TO lsadmin;
+
+CREATE OR REPLACE FUNCTION cats.transfer( theId int, theNewId int) returns int AS $$
+  SELECT cats._mkcryocmd( 'transfer', $1, $2);
+$$ LANGUAGE sql SECURITY DEFINER;
+ALTER FUNCTION cats.transfer( int, int) OWNER TO lsadmin;
+
+CREATE OR REPLACE FUNCTION cats.soak( theId int) returns int AS $$
+  SELECT cats._mkcryocmd( 'soak', $1, 0);
+$$ LANGUAGE sql SECURITY DEFINER;
+ALTER FUNCTION cats.soak( int) OWNER TO lsadmin;
+
+CREATE OR REPLACE FUNCTION cats.dry( theId int) returns int AS $$
+  SELECT cats._mkcryocmd( 'dry', $1, 0);
+$$ LANGUAGE sql SECURITY DEFINER;
+ALTER FUNCTION cats.dry( int) OWNER TO lsadmin;
+
+CREATE OR REPLACE FUNCTION cats.home( theId int) returns int AS $$
+  SELECT cats._mkcryocmd( 'home', $1, 0);
+$$ LANGUAGE sql SECURITY DEFINER;
+ALTER FUNCTION cats.home( int) OWNER TO lsadmin;
+
+CREATE OR REPLACE FUNCTION cats.safe( theId int) returns int AS $$
+  SELECT cats._mkcryocmd( 'safe', $1, 0);
+$$ LANGUAGE sql SECURITY DEFINER;
+ALTER FUNCTION cats.safe( int) OWNER TO lsadmin;
+
+CREATE OR REPLACE FUNCTION cats.reference( ) returns int AS $$
+  SELECT cats._mkcryocmd( 'reference', 0, 0);
+$$ LANGUAGE sql SECURITY DEFINER;
+ALTER FUNCTION cats.reference( ) OWNER TO lsadmin;
+

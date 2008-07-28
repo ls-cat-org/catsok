@@ -50,6 +50,8 @@ class CatsOk:
     waiting = False
 
     def dbService( self, event):
+        while self.db.getnotify() != None:
+            pass
         return True
 
     def dblockService( self, event):
