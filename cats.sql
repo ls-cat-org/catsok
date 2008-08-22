@@ -1,3 +1,4 @@
+begin;
 DROP SCHEMA cats cascade;
 CREATE SCHEMA cats;
 GRANT USAGE ON SCHEMA cats TO PUBLIC;
@@ -80,6 +81,7 @@ CREATE OR REPLACE FUNCTION cats.setstate (
        LN2Reg boolean,			-- 13
        LN2Warming boolean		-- 14
 ) returns int as $$
+DECLARE
 BEGIN
   INSERT INTO cats.states ( csPower, csAutoMode, csDefaultStatus, csToolNumber, csPathName,
               csLidNumberOnTool, csSampleNumberOnTool, csLidNumberMounted, csSampleNumberMounted, csPlateNumber,
@@ -87,9 +89,13 @@ BEGIN
        VALUES (  power, autoMode, defaultStatus, toolNumber,  pathName,
                  lidNumberOnTool, sampleNumberOnTool, lidNumberMounted, sampleNumberMounted, plateNumber,
                  wellNumber, barcode, pathRunning, LN2Reg, LN2Warming);
+
+
   IF FOUND then
+      PERFORM px.setMountedSample( toolNumber, lidNumberMounted, sampleNumberMounted);
+      PERFORM px.setTooledSample( toolNumber, lidNumberOnTool, sampleNumberOnTool);
     return 1;
-  else
+  ELSE
     return 0;
   END IF;
   return 0;
@@ -128,6 +134,75 @@ CREATE OR REPLACE FUNCTION cats.setState() returns void as $$
   END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 ALTER FUNCTION cats.setState() OWNER TO lsadmin;
+
+
+CREATE OR REPLACE FUNCTION px.setMountedSample( tool text, lid int, sampleno int) RETURNS int AS $$
+  DECLARE
+    cstn int;
+    cdwr int;
+    ccyl int;
+    csmp int;
+    sampId int;
+    toolId int;
+    diffId int;
+    
+  BEGIN
+    cstn := px.getStation();
+    toolId = (cstn<<24) | (1<<16);
+    diffId = (cstn<<24) | (2<<16);
+    sampId = 0;
+
+    IF lid::int > 0 and sampleno::int > 0 THEN
+    -- computer our position ID from the lid and sample number returned
+    -- For sample mounted
+      cdwr := lid + 2;
+      SELECT ((sampleno-1)/ctnsamps)::int + ctoff, (sampleno-1)%ctnsamps+1 INTO ccyl,csmp FROM cats._cylinder2tool WHERE ctToolName=tool or ctToolNo=tool LIMIT 1;
+      sampId = (cstn<<24) | (cdwr<<16) | (ccyl<<8) | (csmp);
+      
+      UPDATE px.holderPositions set hpTempLoc = 0 WHERE hpTempLoc = diffId;
+      UPDATE px.holderPositions set hpTempLoc = diffId WHERE hpId = sampId;
+    ELSE
+      UPDATE px.holderPositions set hpTempLoc = 0 WHERE hpTempLoc = diffId;
+    END IF;
+    return sampId;
+  END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+ALTER FUNCTION px.setMountedSample( text, int, int) OWNER TO lsadmin;
+
+
+CREATE OR REPLACE FUNCTION px.setTooledSample( tool text, lid int, sampleno int) RETURNS int AS $$
+  DECLARE
+    cstn int;
+    cdwr int;
+    ccyl int;
+    csmp int;
+    sampId int;
+    toolId int;
+    diffId int;
+    
+  BEGIN
+    cstn := px.getStation();
+    toolId = (cstn<<24) | (1<<16);
+    diffId = (cstn<<24) | (2<<16);
+    sampId = 0;
+
+    IF lid::int > 0 and sampleno::int > 0 THEN
+    -- computer our position ID from the lid and sample number returned
+    -- For sample mounted
+      cdwr := lid + 2;
+      SELECT ((sampleno-1)/ctnsamps)::int + ctoff, (sampleno-1)%ctnsamps+1 INTO ccyl,csmp FROM cats._cylinder2tool WHERE ctToolName=tool or ctToolNo=tool LIMIT 1;
+      sampId = (cstn<<24) | (cdwr<<16) | (ccyl<<8) | (csmp);
+      
+      UPDATE px.holderPositions set hpTempLoc = 0 WHERE hpTempLoc = toolId;
+      UPDATE px.holderPositions set hpTempLoc = toolId WHERE hpId = sampId;
+    ELSE
+      UPDATE px.holderPositions set hpTempLoc = 0 WHERE hpTempLoc = toolId;
+    END IF;
+    return sampId;
+  END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+ALTER FUNCTION px.setTooledSample( text, int, int) OWNER TO lsadmin;
+
 
 
 CREATE TABLE cats.io (
@@ -588,6 +663,8 @@ CREATE TABLE cats._queue (
 );
 ALTER TABLE cats._queue OWNER TO lsadmin;
        
+
+
 CREATE OR REPLACE FUNCTION cats._pushqueue( cmd text) RETURNS VOID AS $$
   DECLARE
     c text;	-- trimmed command
@@ -606,6 +683,8 @@ CREATE OR REPLACE FUNCTION cats._pushqueue( cmd text) RETURNS VOID AS $$
           LIMIT 1;
       IF FOUND THEN
         EXECUTE 'NOTIFY ' || ntfy;
+      ELSE
+        RAISE EXCEPTION 'Client is not associated with a robot: %', inet_client_addr();
       END IF;
     END IF;
     RETURN;
@@ -635,8 +714,13 @@ CREATE OR REPLACE FUNCTION cats.init() RETURNS VOID AS $$
   -- Called by process controlling the robot
   --
   DECLARE
+    ntfy text;
   BEGIN
     DELETE FROM cats._queue WHERE qaddr = inet_client_addr();    
+    SELECT cnotifyrobot INTO ntfy FROM px._config WHERE cstnkey=px.getstation();
+    IF FOUND THEN
+       EXECUTE 'LISTEN ' || ntfy;
+    END IF;
   END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 ALTER FUNCTION cats.init() OWNER TO lsadmin;
@@ -728,6 +812,7 @@ CREATE TABLE cats._cylinder2tool (
        cttoolno int,			-- the CATS tool number needed to access this cylinder
        cttoolname text			-- the name of the corresponding CATS tool (control requires number, status replies with name)
 );
+ALTER TABLE cats._cylinder2tool OWNER TO lsadmin;
 
 INSERT INTO cats._cylinder2tool (ctcyl, ctoff, ctnsamps, cttoolno, cttoolname) VALUES (  1,  1, 10, 1, 'SPINE');
 INSERT INTO cats._cylinder2tool (ctcyl, ctoff, ctnsamps, cttoolno, cttoolname) VALUES (  2,  1, 10, 1, 'SPINE');
@@ -793,7 +878,7 @@ CREATE OR REPLACE FUNCTION cats._mkcryocmd( theCmd text, theId int, theNewId int
       END IF;
       rlid1 := cdwr1 - 2;
 
-      SELECT cttoolno, (ccyl-ctoff)*ctnsamps + csmp INTO rtool1, rsmpl1 FROM cats._cylinder2tool WHERE ctcyl=ccyl1;
+      SELECT cttoolno, (ccyl1-ctoff)*ctnsamps + csmp1 INTO rtool1, rsmpl1 FROM cats._cylinder2tool WHERE ctcyl=ccyl1;
       IF NOT FOUND THEN
         return 0;
       END IF;
@@ -819,7 +904,7 @@ CREATE OR REPLACE FUNCTION cats._mkcryocmd( theCmd text, theId int, theNewId int
       END IF;
       rlid2 := cdwr2 - 2;
 
-      SELECT cttoolno, (ccyl2-ctoff2)*ctnsamps + csmp2 INTO rtool2, rsmpl2 FROM cats._cylinder2tool WHERE ctcyl=ccyl2;
+      SELECT cttoolno, (ccyl2-ctoff)*ctnsamps + csmp2 INTO rtool2, rsmpl2 FROM cats._cylinder2tool WHERE ctcyl=ccyl2;
       IF NOT FOUND OR rtool1 != rtool2 THEN
         return 0;
       END IF;
@@ -827,14 +912,13 @@ CREATE OR REPLACE FUNCTION cats._mkcryocmd( theCmd text, theId int, theNewId int
       UPDATE cats._args SET aNewLid=rlid2, aNewSample=rsmpl2 WHERE akey=currval('cats._args_akey_seq');
     END IF;
 
-
     PERFORM cats._pushqueue( cats._gencmd( currval( 'cats._args_akey_seq')));
     return 1;
   END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 ALTER FUNCTION cats._mkcryocmd( text, int, int) OWNER TO lsadmin;
 
-CREATE OR REPLACE FUNCTION cats.put( theId int) returns VOID AS $$
+CREATE OR REPLACE FUNCTION cats.put( theId int) returns int AS $$
   SELECT cats._mkcryocmd( 'put', $1, 0);
 $$ LANGUAGE sql SECURITY DEFINER;
 ALTER FUNCTION cats.put( int) OWNER TO lsadmin;
@@ -894,3 +978,4 @@ CREATE OR REPLACE FUNCTION cats.reference( ) returns int AS $$
 $$ LANGUAGE sql SECURITY DEFINER;
 ALTER FUNCTION cats.reference( ) OWNER TO lsadmin;
 
+commit;

@@ -2,7 +2,8 @@
 #
 
 
-import sys, os, select, pg, time, traceback, datetime, socket, Bang
+import sys, os, select, pg, time, traceback, datetime, socket, EpicsCA
+#import Bang
 
 class CatsOkError( Exception):
     value = None
@@ -22,10 +23,16 @@ class CatsOk:
     """
     Monitors status of the cats robot, updates database, and controls CatsOk lock
     """
+    needAirRights = False
+    haveAirRights = False
+    pathsNeedingAirRights = [
+        "FromMD2", "ToMD2", "MD2CheckPointWaitingForAirRights"
+        ]
 
+    CATSOkRelayPVName = '21:F1:pmac10:acc65e:1:bo0'
+    CATSOkRelayPV     = None            # the epics pv of our relay
     termstr = "\r"      # character expected to terminate cats response
     db = None           # database connection
-    dblock = None       # database connection for the CatsOk lock
 
     t1 = None           # socket object used to make connection to cats control socket
     t1Input = ""        # used to build response from t1
@@ -47,60 +54,159 @@ class CatsOk:
     statusIoLast       = None
     statusPositionLast = None
     statusMessageLast  = None
-    waiting = False
+    waiting = False     # true when the last status reponse did not contain an entire message (more to come)
+    cmdQueue = []       # queue of commands received from postgresql
+    statusQueue = []    # queue of status requests to send to cats server
+    statusFailedPushCount = 0
+
+
+    def maybePushStatus( self, rqst):
+        if self.t2 == None:
+            # send requests to the bit bucket if the server is not connected
+            return False
+        try:
+            i = self.statusQueue.index( rqst)
+        except ValueError:
+            self.statusQueue.append( rqst)
+            self.p.register( self.t2, select.POLLIN | select.POLLPRI | select.POLLOUT)
+            return True
+
+        self.statusFailedPushCount += 1
+        if self.statusFailedPushCount >=10:
+            print "Exceeded failure count"
+            return False
+        self.statusFailedPushCount = 0
+        return True
+
+    def popStatus( self):
+        rtn = None
+        if len( self.statusQueue):
+            rtn = self.statusQueue.pop()
+        else:
+            self.p.register( self.t2, select.POLLIN | select.POLLPRI)
+        return rtn
+
+    def pushCmd( self, cmd):
+        print "pushing command '%s'" % (cmd)
+        self.cmdQueue.append( cmd)
+        self.p.register( self.t1, select.POLLIN | select.POLLPRI | select.POLLOUT)
+
+
+    def nextCmd( self):
+        rtn = None
+        if len( self.cmdQueue) > 0:
+            rtn = self.cmdQueue.pop(0)
+        else:
+            self.p.register( self.t1, select.POLLIN | select.POLLPRI)
+
+        return rtn
 
     def dbService( self, event):
-        while self.db.getnotify() != None:
-            pass
+
+        # Kludge to allow time for notify to actually get here.  (Why is this needed?)
+        time.sleep( 0.1)
+
+        #
+        # Eat up any accumulated notifies
+        #
+        ntfy = self.db.getnotify()
+        while  ntfy != None:
+            print "Received Notify: ", ntfy
+            ntfy = self.db.getnotify()
+
+        #
+        # grab a waiting command
+        #
+        cmdFlag = True
+        while( cmdFlag):
+            qr = self.db.query( "select cats._popqueue() as cmd")
+            r = qr.dictresult()[0]
+            if len( r["cmd"]) > 0:
+                self.pushCmd( r["cmd"])
+            else:
+                cmdFlag = False
+
         return True
 
-    def dblockService( self, event):
-        return True
-
+    #
+    # Service reply from Command socket
+    #
     def t1Service( self, event):
-        newStr = self.t1.recv( 4096)
-        if len(newStr) == 0:
-            self.p.unregister( self.t1.fileno())
-            return False
+        if event & select.POLLOUT:
+            cmd = self.nextCmd()
+            if cmd != None:
+                print "sending command '%s'" % (cmd)
+                self.t1.send( cmd + self.termstr)
 
-        print "Received:", newStr
-        str = self.t1Input + newStr
-        pList = str.replace('\n','\r').split( self.termstr)
-        if len( str) > 0 and str[-2:-1] != self.termstr:
-            self.t1Input = pList.pop( -1)
+        if event & (select.POLLIN | select.POLLPRI):
+            newStr = self.t1.recv( 4096)
+            if len(newStr) == 0:
+                self.p.unregister( self.t1.fileno())
+                return False
+
+            print "Received:", newStr
+            str = self.t1Input + newStr
+            pList = str.replace('\n','\r').split( self.termstr)
+            if len( str) > 0 and str[-2:-1] != self.termstr:
+                self.t1Input = pList.pop( -1)
         
-        for s in pList:
-            print s
+            for s in pList:
+                print s
         return True
 
+    #
+    # Service reply from status socket
     def t2Service( self, event):
-        try:
-            newStr = self.t2.recv( 4096)
-        except socket.error:
-            self.p.unregister( self.t2.fileno())
-            return False
+        if event & (select.POLLIN | select.POLLPRI):
+            try:
+                newStr = self.t2.recv( 4096)
+            except socket.error:
+                self.p.unregister( self.t2.fileno())
+                self.t2 = None
+                return False
 
-        if len(newStr) == 0:
-            self.p.unregister( self.t2.fileno())
-            return False
-        self.waiting = False
-        print "Status Received:", newStr
+            #
+            # zero length return means an error, most likely the socket has shut down
+            if len(newStr) == 0:
+                self.p.unregister( self.t2.fileno())
+                self.t2 = None
+                return False
 
-        str = self.t2Input + newStr
-        pList = str.replace('\n','\r').split( self.termstr)
-        if len( str) > 0 and str[-2:-1] != self.termstr:
-            self.t2Input = pList.pop( -1)
+            # Assume we have the full response
+            self.waiting = False
+
+            print "Status Received:", newStr.strip()
+
+            #
+            # add what we have from what was left over from last time
+            str = self.t2Input + newStr
         
-        for s in pList:
-            sFound = False
-            for ss in self.sFan:
-                if s.startswith( ss):
-                    self.sFan[ss](s)
-                    sFound = True
-                    break
-            if not sFound:
-                # if we do not recognize the response then it must be a message
-                self.statusMessageParse( s)
+            #
+            # split the string into an array of responses: each distinct reply ends with termstr
+            pList = str.replace('\n','\r').split( self.termstr)
+            if len( str) > 0 and str[-2:-1] != self.termstr:
+                # if the last entry does not end with a termstr then there is more to come, save it for later
+                #
+                self.t2Input = pList.pop( -1)
+        
+            #
+            # go through the list of completed status responses
+            for s in pList:
+                sFound = False
+                for ss in self.sFan:
+                    if s.startswith( ss):
+                        # call the status response function
+                        self.sFan[ss](s)
+                        sFound = True
+                        break
+                if not sFound:
+                    # if we do not recognize the response then it must be a message
+                    self.statusMessageParse( s)
+
+        if event & select.POLLOUT:
+            s = self.popStatus()
+            if s != None:
+                self.t2.send( s + self.termstr)
 
         return True
 
@@ -109,27 +215,41 @@ class CatsOk:
         # establish connections to CATS sockets
         self.t1 = socket.socket( socket.AF_INET, socket.SOCK_STREAM)
         try:
-            self.t1.connect( ("164.54.252.155", 1000))
+            self.t1.connect( ("10.1.0.3", 10001))
         except socket.error:
             raise CatsOkError( "Could not connect to command port")
+        self.t1.setblocking( 1)
+
+
         self.t2 = socket.socket( socket.AF_INET, socket.SOCK_STREAM)
         try:
-            self.t2.connect( ("164.54.252.155", 10000))
+            self.t2.connect( ("10.1.0.3", 10000))
         except socket.error:
             raise CatsOkError( "Could not connect to status port")
-    
+        self.t2.setblocking( 1)
+
         #
         # establish connecitons to database server
-        self.db       = pg.connect(dbname='ls',user='lsuser', host='contrabass.ls-cat.org')
-        self.dblock   = pg.connect(dbname='lslocks',user='lsuser', host='contrabass.ls-cat.org')
+        self.db = pg.connect(dbname='ls',user='lsuser', host='10.1.0.3')
+
+        #
+        # Listen to db requests
+        self.db.query( "select cats.init()")
+
+
+        #
+        # Get the epics relay pv
+        self.CATSOkRelayPV = EpicsCA.PV( self.CATSOkRelayPVName)
+        # initially set this high
+        self.CATSOkRelayPV.put( 1)
+
 
         #
         # Set up poll object
         self.p = select.poll()
-        self.p.register( self.t1.fileno(), select.POLLIN)
-        self.p.register( self.t2.fileno(), select.POLLIN)
-        self.p.register( self.db.fileno(), select.POLLIN)
-        self.p.register( self.dblock.fileno(), select.POLLIN)
+        self.p.register( self.t1.fileno(), select.POLLIN | select.POLLPRI)
+        self.p.register( self.t2.fileno(), select.POLLIN | select.POLLPRI)
+        self.p.register( self.db.fileno(), select.POLLIN | select.POLLPRI)
 
         #
         # Set up fan to unmultiplex the poll response
@@ -137,7 +257,6 @@ class CatsOk:
             self.t1.fileno()     : self.t1Service,
             self.t2.fileno()     : self.t2Service,
             self.db.fileno()     : self.dbService,
-            self.dblock.fileno() : self.dblockService
             }
 
         #
@@ -150,13 +269,13 @@ class CatsOk:
             }
 
         self.srqst = {
-            "state"     : { "period" : 30.0, "last" : None, "rqstCnt" : 0, "rcvdCnt" : 0},
-            "io"        : { "period" : 30.0, "last" : None, "rqstCnt" : 0, "rcvdCnt" : 0},
-            "position"  : { "period" : 30.0, "last" : None, "rqstCnt" : 0, "rcvdCnt" : 0},
-            "message"   : { "period" : 30.0, "last" : None, "rqstCnt" : 0, "rcvdCnt" : 0}
+            "state"     : { "period" : 0.5, "last" : None, "rqstCnt" : 0, "rcvdCnt" : 0},
+            "io"        : { "period" : 0.5, "last" : None, "rqstCnt" : 0, "rcvdCnt" : 0},
+            "position"  : { "period" : 30, "last" : None, "rqstCnt" : 0, "rcvdCnt" : 0},
+            "message"   : { "period" : 30, "last" : None, "rqstCnt" : 0, "rcvdCnt" : 0}
             }
 
-        self.MD2 = Bang.Sphere( Bang.Point( 0.5, 0.5, 0.5), 0.5)
+        # self.MD2 = Bang.Sphere( Bang.Point( 0.5, 0.5, 0.5), 0.5)
 
     def close( self):
         if self.t1 != None:
@@ -168,9 +287,6 @@ class CatsOk:
         if self.db != None:
             self.db.close()
             self.db = None
-        if self.dblock != None:
-            self.dblock.close()
-            self.dblock = None
 
     def run( self):
         runFlag = True
@@ -181,16 +297,28 @@ class CatsOk:
                     break
             if runFlag and not self.waiting:
                 #
-                # create status requests
+                # queue up new requests if it is time to
+                n = datetime.datetime.now()
                 for k in self.srqst.keys():
-                    n = datetime.datetime.now()
                     r = self.srqst[k]
                     if r["last"] == None or (n - r["last"] > datetime.timedelta(0,r["period"])):
-                        print k, self.t2.send( k + "\r")
-                        self.waiting = True
+                        runFlag &= self.maybePushStatus( k)
                         r["last"] = datetime.datetime.now()
-                        r["rqstCnt"] = r["rqstCnt"] + 1
-                        break
+                        r["rqstCnt"] += 1
+
+            if runFlag and self.needAirRights and not self.haveAirRights:
+                qs = "select px.requestRobotAirRights() as rslt"
+                qr = self.db.query( qs)
+                rslt = qr.dictresult()[0]["rslt"]
+                if rslt == "t":
+                    self.haveAirRights = True
+                    self.pushCmd( "vdi90on")
+
+            if runFlag and not self.needAirRights and self.haveAirRights:
+                self.db.query( "select px.dropRobotAirRights()")    # drop rights and send notify that sample is ready (if it is)
+
+                self.haveAirRights = False
+
         self.close()
 
     def statusStateParse( self, s):
@@ -210,10 +338,10 @@ class CatsOk:
         #             0           1           2         3       4         5      6       7       8        9     10        11        12          13         14
         aType = ["::boolean","::boolean","::boolean","::text","::text","::int","::int","::int","::int","::int","::int","::text","::boolean","::boolean","::boolean"]
         qs = "select cats.setstate( "
-        print a
+
         needComma = False
         for zz in a:
-            if len(zz) == 0:
+            if zz == None or len(zz) == 0:
                 b.append("NULL")
             else:
                 b.append( "'%s'%s" % (zz, aType[i]))
@@ -229,7 +357,15 @@ class CatsOk:
         #( a[0], a[1], a[2], a[3], a[4], a[5], a[6], a[7], a[8], a[9], a[10], a[11], a[12], a[13], a[14])
         self.db.query( qs)
         self.statusStateLast = s
-        
+
+        # See if we are on a path that requires air rights
+        pathName = a[4];
+        try:
+            ndx = self.pathsNeedingAirRights.index(pathName)
+        except ValueError:
+            self.needAirRights = False
+        else:
+            self.needAirRights = True
 
     def statusIoParse( self, s):
         self.srqst["io"]["rcvdCnt"] = self.srqst["io"]["rcvdCnt"] + 1
