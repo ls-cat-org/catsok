@@ -1,11 +1,13 @@
 #! /usr/bin/python
 
-import sys, os, select, pg, time, traceback, datetime, socket, math, copy
+import sys, os, select, pg, time, traceback, datetime, socket, math, copy, EpicsCA
 
 class CatsServer:
     """
     Basic server to test cats client functionality
     """
+
+    MagnetRelayPVName = '21:F1:pmac10:acc65e:1:bo1'
 
     vdi = [0,0,0,0,0,0,0,0,0,0]
     stateList = [
@@ -260,6 +262,13 @@ class CatsServer:
         self.states["pathName"] = 'checkPointDropAirRights'
         self.states["pathRunning"] = 1
 
+    def strengthenMagnet( self):
+        self.ios["ioMagnet"] = 1
+        self.MagnetRelayPV.put( 1)
+
+    def weakenMagnet( self):
+        self.ios["ioMagnet"] = 0
+        self.MagnetRelayPV.put( 0)
 
     def __init__(self):
         self.nowCmds = {
@@ -274,12 +283,14 @@ class CatsServer:
             'home'           : [(10.0, self.pause)],
             'safe'           : [(10.0, self.pause)],
             'reference'      : [(10.0, self.pause)],
-            'put'            : [( 2.0, self.openLid),( 10.0, self.getSampleFromDewar),(0.1, self.dewarToCheckPoint),( 10.0, self.putSampleOnMD2),(2.0, self.MD2ToCheckPoint),(0.1, self.closeLids), ( 5.0, self.goHome)],
+            'put'            : [( 2.0, self.openLid),( 10.0, self.getSampleFromDewar),(0.1, self.dewarToCheckPoint),( 10.0, self.putSampleOnMD2),(2.0, self.weakenMagnet),(2.0,self.strengthenMagnet),(2.0, self.MD2ToCheckPoint),(0.1, self.closeLids), ( 5.0, self.goHome)],
             'put_bcrd'       : [(10.0, self.pause)],
-            'get'            : [(0.1, self.homeToCheckPoint),( 10.0, self.getSampleFromMD2),(0.1,self.openMountedLid),(2, self.MD2ToCheckPoint),( 10.0, self.putSampleInDewar),(5.0, self.goHome),(0.1, self.closeLids)],
+            'get'            : [(0.1, self.homeToCheckPoint),( 10.0, self.getSampleFromMD2),(2.0, self.weakenMagnet),(2.0,self.strengthenMagnet),(0.1,self.openMountedLid),(2, self.MD2ToCheckPoint),( 10.0, self.putSampleInDewar),(5.0, self.goHome),(0.1, self.closeLids)],
             'get_bcrd'       : [(10.0, self.pause)],
-            'getput'         : [(0.1, self.homeToCheckPoint),( 10.0, self.getSampleFromMD2),(0.1,self.openMountedLid),(2, self.MD2ToCheckPoint), ( 10.0, self.putSampleInDewar),(5.0, self.goHome),(0.1, self.closeLids),
-                                ( 2.0, self.openLid),( 10.0, self.getSampleFromDewar),(0.1, self.dewarToCheckPoint),( 10.0, self.putSampleOnMD2),(2.0, self.MD2ToCheckPoint),(0.1, self.closeLids), ( 5.0, self.goHome)],
+            'getput'         : [(0.1, self.homeToCheckPoint),( 10.0, self.getSampleFromMD2),  (2.0, self.weakenMagnet),     (2.0,self.strengthenMagnet),(0.1,self.openMountedLid),
+                                (2, self.MD2ToCheckPoint),   ( 10.0, self.putSampleInDewar),  (5.0, self.goHome),           (0.1, self.closeLids),
+                                ( 2.0, self.openLid),        ( 10.0, self.getSampleFromDewar),(0.1, self.dewarToCheckPoint),( 10.0, self.putSampleOnMD2),
+                                (2.0, self.weakenMagnet),    (2.0,self.strengthenMagnet),     (2.0, self.MD2ToCheckPoint),  (0.1, self.closeLids), ( 5.0, self.goHome)],
             'getput_bcrd'    : [(10.0, self.pause)],
             'barcode'        : [(10.0, self.pause)],
             'transfer'       : [(10.0, self.pause)],
@@ -377,6 +388,9 @@ class CatsServer:
         self.states["power"]    = 1
         self.states["autoMode"] = 1
         self.states["toolNumber"] = "SPINE"
+
+        self.MagnetRelayPV = EpicsCA.PV( self.MagnetRelayPVName)
+        self.MagnetRelayPV.put( 1)
         
 
         print "\nReady for connections"

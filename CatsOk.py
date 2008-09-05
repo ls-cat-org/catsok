@@ -5,6 +5,8 @@
 import sys, os, select, pg, time, traceback, datetime, socket, EpicsCA
 #import Bang
 
+
+
 class CatsOkError( Exception):
     value = None
 
@@ -18,6 +20,62 @@ class CatsOkError( Exception):
     def __str__( self):
         return repr( self.value)
 
+
+class _Q:
+    
+    db = None   # our database connection
+
+    def open( self):
+        self.db = pg.connect( dbname="ls", host="contrabass.ls-cat.org", user="lsuser" )
+
+    def close( self):
+        self.db.close()
+
+    def __init__( self):
+        self.open()
+
+    def reset( self):
+        self.db.reset()
+
+    def query( self, qs):
+        if qs == '':
+            return rtn
+        if self.db.status == 0:
+            self.reset()
+        try:
+            # ping the server
+            qr = self.db.query(qs)
+        except:
+            if self.db.status == 1:
+                print >> sys.stderr, sys.exc_info()[0]
+                print >> sys.stderr, '-'*60
+                traceback.print_exc(file=sys.stderr)
+                print >> sys.stderr, '-'*60
+                return None
+            # reset the connection, should
+            # put in logic here to deal with transactions
+            # as transactions are rolled back
+            #
+            self.db.reset()
+            if self.db.status != 1:
+                # Bad status even after a reset, bail
+                raise CatsOkError( 'Database Connection Lost')
+
+            qr = self.db.query( qs)
+
+        return qr
+
+    def dictresult( self, qr):
+        return qr.dictresult()
+
+    def e( self, s):
+        return pg.escape_string( s)
+
+    def fileno( self):
+        return self.db.fileno()
+
+    def getnotify( self):
+        return self.db.getnotify()
 
 class CatsOk:
     """
@@ -103,28 +161,32 @@ class CatsOk:
 
     def dbService( self, event):
 
-        # Kludge to allow time for notify to actually get here.  (Why is this needed?)
-        time.sleep( 0.1)
+        if event & select.POLLERR:
+            self.db.reset();
 
-        #
-        # Eat up any accumulated notifies
-        #
-        ntfy = self.db.getnotify()
-        while  ntfy != None:
-            print "Received Notify: ", ntfy
+        if event & (select.POLLIN | select.POLLPRI):
+            # Kludge to allow time for notify to actually get here.  (Why is this needed?)
+            time.sleep( 0.1)
+
+            #
+            # Eat up any accumulated notifies
+            #
             ntfy = self.db.getnotify()
+            while  ntfy != None:
+                print "Received Notify: ", ntfy
+                ntfy = self.db.getnotify()
 
-        #
-        # grab a waiting command
-        #
-        cmdFlag = True
-        while( cmdFlag):
-            qr = self.db.query( "select cats._popqueue() as cmd")
-            r = qr.dictresult()[0]
-            if len( r["cmd"]) > 0:
-                self.pushCmd( r["cmd"])
-            else:
-                cmdFlag = False
+            #
+            # grab a waiting command
+            #
+            cmdFlag = True
+            while( cmdFlag):
+                qr = self.db.query( "select cats._popqueue() as cmd")
+                r = qr.dictresult()[0]
+                if len( r["cmd"]) > 0:
+                    self.pushCmd( r["cmd"])
+                else:
+                    cmdFlag = False
 
         return True
 
@@ -230,8 +292,12 @@ class CatsOk:
 
         #
         # establish connecitons to database server
-        self.db = pg.connect(dbname='ls',user='lsuser', host='10.1.0.3')
-
+        #self.db = pg.connect(dbname='ls',user='lsuser', host='10.1.0.3')
+        self.db = _Q()
+        #self.db.query( "PREPARE io_noArgs AS select cats.setio()")
+        #self.db.query( "PREPARE position_noArgs AS select cats.setposition()")
+        #self.db.query( "PREPARE message_noArgs AS select cats.setmessage()")
+        #self.db.query( "PREPARE state_noArgs AS select cats.setstate()")
         #
         # Listen to db requests
         self.db.query( "select cats.init()")
@@ -324,7 +390,8 @@ class CatsOk:
     def statusStateParse( self, s):
         self.srqst["state"]["rcvdCnt"] = self.srqst["state"]["rcvdCnt"] + 1
         if self.statusStateLast != None and self.statusStateLast == s:
-            self.db.query( "select cats.setstate()")
+            #self.db.query( "execute state_noArgs")
+            #self.db.query( "select cats.setstate()")
             return
 
         # One line command to an argument list
@@ -370,7 +437,8 @@ class CatsOk:
     def statusIoParse( self, s):
         self.srqst["io"]["rcvdCnt"] = self.srqst["io"]["rcvdCnt"] + 1
         if self.statusIoLast != None and self.statusIoLast == s:
-            self.db.query( "select cats.setio()")
+            #self.db.query( "select cats.setio()")
+            #self.db.query( "execute io_noArgs")
             return
 
         # One line command to pull out the arguments as one string
@@ -388,7 +456,8 @@ class CatsOk:
     def statusPositionParse( self, s):
         self.srqst["position"]["rcvdCnt"] = self.srqst["position"]["rcvdCnt"] + 1
         if self.statusPositionLast != None and self.statusPositionLast == s:
-            self.db.query( "select cats.setposition()")
+            #self.db.query( "select cats.setposition()")
+            #self.db.query( "execute position_noArgs")
             return
 
         # One line command to an argument list
@@ -408,7 +477,8 @@ class CatsOk:
     def statusMessageParse( self, s):
         self.srqst["message"]["rcvdCnt"] = self.srqst["message"]["rcvdCnt"] + 1
         if self.statusMessageLast != None and self.statusMessageLast == s:
-            self.db.query( "select cats.setmessage()")
+            #self.db.query( "select cats.setmessage()")
+            #self.db.query( "execute message_noArgs")
             return
 
         qs = "select cats.setmessage( '%s')" % (s)
@@ -434,7 +504,7 @@ if __name__ == '__main__':
                 iFlag = False
         try:
             z.run()
-        except CatsOkError, e:
+        except CatsOkError:
             z.close()
         time.sleep( 10)
         iFlag = True
