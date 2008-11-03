@@ -277,7 +277,7 @@ class CatsOk:
         # establish connections to CATS sockets
         self.t1 = socket.socket( socket.AF_INET, socket.SOCK_STREAM)
         try:
-            self.t1.connect( ("10.1.0.3", 10001))
+            self.t1.connect( ("10.1.19.19", 1000))
         except socket.error:
             raise CatsOkError( "Could not connect to command port")
         self.t1.setblocking( 1)
@@ -285,7 +285,7 @@ class CatsOk:
 
         self.t2 = socket.socket( socket.AF_INET, socket.SOCK_STREAM)
         try:
-            self.t2.connect( ("10.1.0.3", 10000))
+            self.t2.connect( ("10.1.19.19", 10000))
         except socket.error:
             raise CatsOkError( "Could not connect to status port")
         self.t2.setblocking( 1)
@@ -395,7 +395,10 @@ class CatsOk:
             return
 
         # One line command to an argument list
-        a = s.partition( '(')[2].partition( ')')[0].split(',')
+        a = s[s.find("(")+1 : s.find(")")].split(',')
+
+        # a = s.partition( '(')[2].partition( ')')[0].split(',')
+
         if len(a) != 15:
             print s
             raise CatsOkError( 'Wrong number of arguments received in status state response: got %d, exptected 15' % (len(a)))
@@ -443,7 +446,10 @@ class CatsOk:
 
         # One line command to pull out the arguments as one string
         # hope this is in the right format to send to postresql server
-        a = s.partition( '(')[2].partition( ')')[0]
+
+        a = s[s.find("(")+1:s.find(")")]
+        #a = s.partition( '(')[2].partition( ')')[0]
+
         b = a.replace( "1", "'t'")
         c = b.replace( "0", "'f'")
 
@@ -461,7 +467,9 @@ class CatsOk:
             return
 
         # One line command to an argument list
-        a = s.partition( '(')[2].partition( ')')[0].split(',')
+        a = s[s.find("(")+1 : s.find(")")].split(',')
+
+        #a = s.partition( '(')[2].partition( ')')[0].split(',')
         if len(a) != 6:
             raise CatsOkError( 'Wrong number of arguments received in status state response: got %d, exptected 14' % (len(a)))
         #                               0   1   2   3   4  5
