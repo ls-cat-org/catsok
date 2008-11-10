@@ -81,11 +81,12 @@ class CatsOk:
     """
     Monitors status of the cats robot, updates database, and controls CatsOk lock
     """
-    needAirRights = False
-    haveAirRights = False
     pathsNeedingAirRights = [
         "put", "put_bcrd", "get", "getput", "getput_bcrd"
         ]
+
+    needAirRights = False
+    haveAirRights = False
 
     CATSOkRelayPVName = '21:F1:pmac10:acc65e:1:bo0'
     CATSOkRelayPV     = None            # the epics pv of our relay
@@ -107,6 +108,7 @@ class CatsOk:
     MD2 = None          # Sphere Defining MD2 location exclusion zone
     RCap = None         # Capsule defining robot tool and arm
     RR   = 0.7          # Distance from tool tip to elbow
+    Pr2 = False         # Process Output 2: CATS requires Air Rights
 
     statusStateLast    = None
     statusIoLast       = None
@@ -268,11 +270,14 @@ class CatsOk:
         if event & select.POLLOUT:
             s = self.popStatus()
             if s != None:
+                print "status request: ", s
                 self.t2.send( s + self.termstr)
 
         return True
 
     def __init__( self):
+        # See if we are on a path that requires air rights
+
         #
         # establish connections to CATS sockets
         self.t1 = socket.socket( socket.AF_INET, socket.SOCK_STREAM)
@@ -337,11 +342,11 @@ class CatsOk:
             }
 
         self.srqst = {
-            "state"     : { "period" : 0.5, "last" : None, "rqstCnt" : 0, "rcvdCnt" : 0},
-            "io"        : { "period" : 0.5, "last" : None, "rqstCnt" : 0, "rcvdCnt" : 0},
-            "di"        : { "period" : 0.5, "last" : None, "rqstCnt" : 0, "rcvdCnt" : 0},
+            "state"     : { "period" : 0.55, "last" : None, "rqstCnt" : 0, "rcvdCnt" : 0},
+            # "io"        : { "period" : 0.5, "last" : None, "rqstCnt" : 0, "rcvdCnt" : 0},
             "do"        : { "period" : 0.5, "last" : None, "rqstCnt" : 0, "rcvdCnt" : 0},
-            "position"  : { "period" : 30, "last" : None, "rqstCnt" : 0, "rcvdCnt" : 0},
+            "di"        : { "period" : 0.6, "last" : None, "rqstCnt" : 0, "rcvdCnt" : 0},
+            # "position"  : { "period" : 0.5, "last" : None, "rqstCnt" : 0, "rcvdCnt" : 0},
             "message"   : { "period" : 30, "last" : None, "rqstCnt" : 0, "rcvdCnt" : 0}
             }
 
@@ -432,18 +437,28 @@ class CatsOk:
         self.db.query( qs)
         self.statusStateLast = s
 
-        # See if we are on a path that requires air rights
-        pathName = a[4];
-        try:
-            ndx = self.pathsNeedingAirRights.index(pathName)
-        except ValueError:
-            self.needAirRights = False
-        else:
-            self.needAirRights = True
+        # Nab air rights when we embark on a path requiring them
+        if not self.haveAirRights:
+            pathName = a[4];
+            try:
+                ndx = self.pathsNeedingAirRights.index(pathName)
+            except ValueError:
+                self.needAirRights = False
+            else:
+                self.needAirRights = True
 
     def statusDoParse( self, s):
         self.srqst["do"]["rcvdCnt"] = self.srqst["do"]["rcvdCnt"] + 1
         print "do:", s
+        do = s[s.find("(")+1:s.find(")")]
+
+        # give up air rights on falling edge of Pr2
+        lastPr2 = self.Pr2
+        self.Pr2 = do[6] == "1"
+        if lastPr2 and not self.Pr2:
+            self.needAirRights = False
+        
+
 
     def statusDiParse( self, s):
         self.srqst["di"]["rcvdCnt"] = self.srqst["di"]["rcvdCnt"] + 1
