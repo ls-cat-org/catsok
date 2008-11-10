@@ -10,6 +10,7 @@ CREATE TABLE cats.states (
        csKey serial primary key,
        csTSStart timestamp with time zone default now(),
        csTSLast  timestamp with time zone default now(),
+       csStn bigint references px.stations (stnkey),
 
        csPower boolean,
        csAutoMode boolean,
@@ -33,7 +34,7 @@ CREATE OR REPLACE FUNCTION cats.statesInsertTF() returns trigger as $$
   DECLARE
     t RECORD;
   BEGIN
-    SELECT * INTO t FROM cats.states ORDER BY csTSLast DESC LIMIT 1;
+    SELECT * INTO t FROM cats.states WHERE csStn=px.getStation() ORDER BY csTSLast DESC LIMIT 1;
     IF FOUND THEN
       IF
         t.csPower = NEW.csPower AND
@@ -83,10 +84,10 @@ CREATE OR REPLACE FUNCTION cats.setstate (
 ) returns int as $$
 DECLARE
 BEGIN
-  INSERT INTO cats.states ( csPower, csAutoMode, csDefaultStatus, csToolNumber, csPathName,
+  INSERT INTO cats.states ( csStn, csPower, csAutoMode, csDefaultStatus, csToolNumber, csPathName,
               csLidNumberOnTool, csSampleNumberOnTool, csLidNumberMounted, csSampleNumberMounted, csPlateNumber,
               csWellNumber, csBarcode, csPathRunning, csLN2Reg, csLN2Warming)
-       VALUES (  power, autoMode, defaultStatus, toolNumber,  pathName,
+       VALUES (  px.getStation(), power, autoMode, defaultStatus, toolNumber,  pathName,
                  lidNumberOnTool, sampleNumberOnTool, lidNumberMounted, sampleNumberMounted, plateNumber,
                  wellNumber, barcode, pathRunning, LN2Reg, LN2Warming);
 
@@ -126,7 +127,7 @@ CREATE OR REPLACE FUNCTION cats.setState() returns void as $$
   DECLARE
     k bigint;
   BEGIN
-    SELECT csKey INTO k FROM cats.states ORDER BY csTSLast DESC LIMIT 1;
+    SELECT csKey INTO k FROM cats.states WHERE csStn = px.getStation() ORDER BY csTSLast DESC LIMIT 1;
     IF FOUND THEN
       UPDATE cats.states SET csTSLast = now() WHERE csKey = k;
     END IF;
@@ -153,7 +154,7 @@ CREATE OR REPLACE FUNCTION px.setMountedSample( tool text, lid int, sampleno int
     sampId = 0;
 
     IF lid::int > 0 and sampleno::int > 0 THEN
-    -- computer our position ID from the lid and sample number returned
+    -- compute our position ID from the lid and sample number returned
     -- For sample mounted
       cdwr := lid + 2;
       SELECT ((sampleno-1)/ctnsamps)::int + ctoff, (sampleno-1)%ctnsamps+1 INTO ccyl,csmp FROM cats._cylinder2tool WHERE ctToolName=tool or ctToolNo=tool LIMIT 1;
@@ -209,6 +210,7 @@ CREATE TABLE cats.io (
        ioKey serial primary key,
        ioTSStart timestamp with time zone default now(),
        ioTSLast  timestamp with time zone default now(),
+       ioStn bigint references px.stations (stnkey),
 
        ioCryoOK boolean,	-- 00 Cryogen Sensors OK:  1 = OK
        ioESAP   boolean,	-- 01 Emergency Stop and Air Pressure OK: 1 = OK
@@ -265,7 +267,7 @@ CREATE OR REPLACE FUNCTION cats.ioInsertTF() returns trigger as $$
   DECLARE
     t record;
   BEGIN
-    SELECT * INTO t FROM cats.io ORDER BY ioTSLast DESC LIMIT 1;
+    SELECT * INTO t FROM cats.io WHERE ioStn=px.getStation() ORDER BY ioTSLast DESC LIMIT 1;
     IF FOUND THEN
       IF
         t.ioCryoOK = NEW.ioCryoOK AND
@@ -381,6 +383,7 @@ CREATE OR REPLACE FUNCTION  cats.setio(
 ) RETURNS INT AS $$
   BEGIN
     INSERT INTO cats.io (
+       ioStn,           -- Our station
        ioCryoOK,	-- 00 Cryogen Sensors OK:  1 = OK
        ioESAP  ,	-- 01 Emergency Stop and Air Pressure OK: 1 = OK
        ioCollisionOK,	-- 02 Collision Sensor OK: 1 = No Collision
@@ -430,6 +433,7 @@ CREATE OR REPLACE FUNCTION  cats.setio(
        ioUnlabed4,	-- 46 Usage not documented
        ioUnlabed5	-- 47 Usage not documented
 ) VALUES (
+       px.getStation(),		-- Our station
        CryoOK,	-- 00 Cryogen Sensors OK:  1 = OK
        ESAP  ,	-- 01 Emergency Stop and Air Pressure OK: 1 = OK
        CollisionOK,	-- 02 Collision Sensor OK: 1 = No Collision
@@ -538,7 +542,7 @@ CREATE OR REPLACE FUNCTION cats.setIO() returns void as $$
   DECLARE
     k bigint;
   BEGIN
-    SELECT ioKey INTO k FROM cats.io ORDER BY ioTSLast DESC LIMIT 1;
+    SELECT ioKey INTO k FROM cats.io WHERE ioStn=px.getStation() ORDER BY ioTSLast DESC LIMIT 1;
     IF FOUND THEN
       UPDATE cats.io SET ioTSLast = now() WHERE ioKey=k;
     END IF;
@@ -552,6 +556,7 @@ CREATE TABLE cats.positions (
        pKey serial primary key,
        pTSStart timestamp with time zone default now(),
        pTSLast  timestamp with time zone default now(),
+       pStn bigint references px.stations (stnkey),
 
        pX numeric(20,6),
        pY numeric(20,6),
@@ -566,7 +571,7 @@ CREATE OR REPLACE FUNCTION cats.positionsInsertTF() returns trigger as $$
   DECLARE
     t record;
   BEGIN
-    SELECT * INTO t FROM cats.positions ORDER BY pTSLast DESC LIMIT 1;
+    SELECT * INTO t FROM cats.positions WHERE pStn=px.getStation() ORDER BY pTSLast DESC LIMIT 1;
     IF FOUND THEN
       IF
         t.pX = NEW.pX AND
@@ -589,7 +594,7 @@ CREATE TRIGGER positionsInsertTrigger BEFORE INSERT ON cats.positions FOR EACH R
 
 CREATE OR REPLACE FUNCTION cats.setposition( x numeric(20,6), y numeric(20,6), z numeric(20,6), rx numeric(20,6), ry numeric(20,6), rz numeric(20,6)) returns int as $$
   BEGIN
-    INSERT INTO cats.positions ( pX, pY, pZ, pRX, pRY, pRZ) VALUES ( x, y, z, rx, ry, rz);
+    INSERT INTO cats.positions ( pStn, pX, pY, pZ, pRX, pRY, pRZ) VALUES ( px.getStation(), x, y, z, rx, ry, rz);
     RETURN 1;
   END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
@@ -599,7 +604,7 @@ CREATE OR REPLACE FUNCTION cats.setPosition() returns void as $$
   DECLARE
     k bigint;
   BEGIN
-    SELECT pKey INTO k FROM cats.positions ORDER BY pTSLast LIMIT 1;
+    SELECT pKey INTO k FROM cats.positions WHERE pStn = px.getStation() ORDER BY pTSLast LIMIT 1;
     IF FOUND THEN
       UPDATE cats.positions SET pTSLast = now() WHERE pKey = k;
     END IF;
@@ -612,7 +617,7 @@ CREATE TABLE cats.messages (
        mKey serial primary key,
        mTSStart timestamp with time zone default now(),
        mTSLast timestamp with time zone default now(),
-       
+       mStn bigint references px.stations (stnkey),
        mmsg text
 );
 ALTER TABLE cats.messages OWNER TO lsadmin;
@@ -621,7 +626,7 @@ CREATE OR REPLACE FUNCTION cats.messagesInsertTF() returns trigger as $$
   DECLARE
     t record;
   BEGIN
-    SELECT * INTO t FROM cats.messages ORDER BY mTSLast DESC LIMIT 1;
+    SELECT * INTO t FROM cats.messages WHERE mStn=px.getStation() ORDER BY mTSLast DESC LIMIT 1;
     IF FOUND THEN
       IF t.mmsg = NEW.mmsg THEN
         UPDATE cats.messages SET mTSLast = now() WHERE mKey = t.mKey;
@@ -635,7 +640,7 @@ ALTER FUNCTION cats.messagesInsertTF() OWNER TO lsadmin;
 
 CREATE OR REPLACE FUNCTION cats.setmessage( msg text) returns int as $$
   BEGIN
-    INSERT INTO cats.messages (mmsg) VALUES (msg);
+    INSERT INTO cats.messages (mStn, mmsg) VALUES (px.getStation(), msg);
     RETURN 1;
   END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
@@ -645,7 +650,7 @@ CREATE OR REPLACE FUNCTION cats.setMessage() returns void as $$
   DECLARE
     k bigint;
   BEGIN
-    SELECT mKey INTO k FROM cats.messages ORDER BY mTSLast DESC LIMIT 1;
+    SELECT mKey INTO k FROM cats.messages WHERE mStn=px.getStation() ORDER BY mTSLast DESC LIMIT 1;
     IF FOUND THEN
       UPDATE cats.messages SET mTSLast = now() WHERE mKey = k;
     END IF;
@@ -828,7 +833,7 @@ INSERT INTO cats._cylinder2tool (ctcyl, ctoff, ctnsamps, cttoolno, cttoolname) V
 INSERT INTO cats._cylinder2tool (ctcyl, ctoff, ctnsamps, cttoolno, cttoolname) VALUES ( 12, 10, 16, 5, 'UNI');
 
 
-CREATE OR REPLACE FUNCTION cats._mkcryocmd( theCmd text, theId int, theNewId int) RETURNS INT AS $$
+CREATE OR REPLACE FUNCTION cats._mkcryocmd( theCmd text, theId int, theNewId int, xx int, yy int, zz int) RETURNS INT AS $$
   --
   -- All the cryocrystallography commands have very similar requirements
   -- This is a low level function to service the put, get, (and getput), as well as the brcd flavors
@@ -836,6 +841,8 @@ CREATE OR REPLACE FUNCTION cats._mkcryocmd( theCmd text, theId int, theNewId int
   --
   DECLARE
     rtn int;	-- return: 1 on success, 0 on failure
+
+    ison boolean;  -- true when the robot is "on"
 	--
 	-- Convert theId so something the robot can use
     cstn1 int;	-- control system's station number
@@ -857,7 +864,24 @@ CREATE OR REPLACE FUNCTION cats._mkcryocmd( theCmd text, theId int, theNewId int
   BEGIN
     rtn := 0;
 
+    SELECT cspower INTO ison FROM cats.states WHERE csstn=px.getStation() ORDER BY csKey DESC LIMIT 1;
+    IF FOUND and not ison THEN
+      PERFORM cats._pushqueue( 'on');
+    END IF;    
+
     INSERT INTO cats._args (aCmd) VALUES ( theCmd);
+
+    UPDATE cats._args SET aXShift = xx, aYShift = yy, aZShift = zz WHERE aKey=currval('cats._args_akey_seq');
+
+    --
+    -- theId is zero for an "get".  Here we need to get the tool number from the current state
+    --
+    IF theId = 0 THEN
+      SELECT cttoolno INTO rtool1 FROM cats._cylinder2tool LEFT JOIN cats.states ON ctToolName=csToolNumber WHERE csstn=px.getStation() ORDER BY ctKey DESC LIMIT 1;
+      IF FOUND THEN
+        UPDATE cats._args SET aCap=rtool1 WHERE aKey=currval('cats._args_akey_seq');
+      END IF;
+    END IF;
 
     IF theId != 0 THEN
       --
@@ -916,65 +940,65 @@ CREATE OR REPLACE FUNCTION cats._mkcryocmd( theCmd text, theId int, theNewId int
     return 1;
   END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
-ALTER FUNCTION cats._mkcryocmd( text, int, int) OWNER TO lsadmin;
+ALTER FUNCTION cats._mkcryocmd( text, int, int, int, int, int) OWNER TO lsadmin;
 
-CREATE OR REPLACE FUNCTION cats.put( theId int) returns int AS $$
-  SELECT cats._mkcryocmd( 'put', $1, 0);
+CREATE OR REPLACE FUNCTION cats.put( theId int, x int, y int, z int) returns int AS $$
+  SELECT cats._mkcryocmd( 'put', $1, 0, $2, $3, $4);
 $$ LANGUAGE sql SECURITY DEFINER;
-ALTER FUNCTION cats.put( int) OWNER TO lsadmin;
+ALTER FUNCTION cats.put( int, int, int, int) OWNER TO lsadmin;
 
-CREATE OR REPLACE FUNCTION cats.put_bcrd( theId int) returns int AS $$
-  SELECT cats._mkcryocmd( 'put_bcrd', $1, 0);
+CREATE OR REPLACE FUNCTION cats.put_bcrd( theId int, x int, y int, z int) returns int AS $$
+  SELECT cats._mkcryocmd( 'put_bcrd', $1, 0, $2, $3, $4);
 $$ LANGUAGE sql SECURITY DEFINER;
-ALTER FUNCTION cats.put_bcrd( int) OWNER TO lsadmin;
+ALTER FUNCTION cats.put_bcrd( int, int, int, int) OWNER TO lsadmin;
 
-CREATE OR REPLACE FUNCTION cats.get( theId int) returns int AS $$
-  SELECT cats._mkcryocmd( 'get', $1, 0);
+CREATE OR REPLACE FUNCTION cats.get( x int, y int, z int) returns int AS $$
+  SELECT cats._mkcryocmd( 'get', 0, 0, $1, $2, $3);
 $$ LANGUAGE sql SECURITY DEFINER;
-ALTER FUNCTION cats.get( int) OWNER TO lsadmin;
+ALTER FUNCTION cats.get( int, int, int) OWNER TO lsadmin;
 
-CREATE OR REPLACE FUNCTION cats.getput( theId int) returns int AS $$
-  SELECT cats._mkcryocmd( 'getput', $1, 0);
+CREATE OR REPLACE FUNCTION cats.getput( theId int, x int, y int, z int) returns int AS $$
+  SELECT cats._mkcryocmd( 'getput', $1, 0, $2, $3, $4);
 $$ LANGUAGE sql SECURITY DEFINER;
-ALTER FUNCTION cats.getput( int) OWNER TO lsadmin;
+ALTER FUNCTION cats.getput( int, int, int, int) OWNER TO lsadmin;
 
-CREATE OR REPLACE FUNCTION cats.getput_bcrd( theId int) returns int AS $$
-  SELECT cats._mkcryocmd( 'getput_bcrd', $1, 0);
+CREATE OR REPLACE FUNCTION cats.getput_bcrd( theId int, x int, y int, z int) returns int AS $$
+  SELECT cats._mkcryocmd( 'getput_bcrd', $1, 0, $2, $3, $4);
 $$ LANGUAGE sql SECURITY DEFINER;
-ALTER FUNCTION cats.getput_bcrd( int) OWNER TO lsadmin;
+ALTER FUNCTION cats.getput_bcrd( int, int, int, int) OWNER TO lsadmin;
 
 CREATE OR REPLACE FUNCTION cats.barcode( theId int) returns int AS $$
-  SELECT cats._mkcryocmd( 'barcode', $1, 0);
+  SELECT cats._mkcryocmd( 'barcode', $1, 0, 0, 0, 0);
 $$ LANGUAGE sql SECURITY DEFINER;
 ALTER FUNCTION cats.barcode( int) OWNER TO lsadmin;
 
 CREATE OR REPLACE FUNCTION cats.transfer( theId int, theNewId int) returns int AS $$
-  SELECT cats._mkcryocmd( 'transfer', $1, $2);
+  SELECT cats._mkcryocmd( 'transfer', $1, $2, 0, 0, 0);
 $$ LANGUAGE sql SECURITY DEFINER;
 ALTER FUNCTION cats.transfer( int, int) OWNER TO lsadmin;
 
 CREATE OR REPLACE FUNCTION cats.soak( theId int) returns int AS $$
-  SELECT cats._mkcryocmd( 'soak', $1, 0);
+  SELECT cats._mkcryocmd( 'soak', $1, 0, 0, 0, 0);
 $$ LANGUAGE sql SECURITY DEFINER;
 ALTER FUNCTION cats.soak( int) OWNER TO lsadmin;
 
 CREATE OR REPLACE FUNCTION cats.dry( theId int) returns int AS $$
-  SELECT cats._mkcryocmd( 'dry', $1, 0);
+  SELECT cats._mkcryocmd( 'dry', $1, 0, 0, 0, 0);
 $$ LANGUAGE sql SECURITY DEFINER;
 ALTER FUNCTION cats.dry( int) OWNER TO lsadmin;
 
 CREATE OR REPLACE FUNCTION cats.home( theId int) returns int AS $$
-  SELECT cats._mkcryocmd( 'home', $1, 0);
+  SELECT cats._mkcryocmd( 'home', $1, 0, 0, 0, 0);
 $$ LANGUAGE sql SECURITY DEFINER;
 ALTER FUNCTION cats.home( int) OWNER TO lsadmin;
 
 CREATE OR REPLACE FUNCTION cats.safe( theId int) returns int AS $$
-  SELECT cats._mkcryocmd( 'safe', $1, 0);
+  SELECT cats._mkcryocmd( 'safe', $1, 0, 0, 0, 0);
 $$ LANGUAGE sql SECURITY DEFINER;
 ALTER FUNCTION cats.safe( int) OWNER TO lsadmin;
 
 CREATE OR REPLACE FUNCTION cats.reference( ) returns int AS $$
-  SELECT cats._mkcryocmd( 'reference', 0, 0);
+  SELECT cats._mkcryocmd( 'reference', 0, 0, 0, 0, 0);
 $$ LANGUAGE sql SECURITY DEFINER;
 ALTER FUNCTION cats.reference( ) OWNER TO lsadmin;
 

@@ -277,7 +277,7 @@ class CatsOk:
         # establish connections to CATS sockets
         self.t1 = socket.socket( socket.AF_INET, socket.SOCK_STREAM)
         try:
-            self.t1.connect( ("10.1.0.3", 10001))
+            self.t1.connect( ("10.1.19.18", 1000))
         except socket.error:
             raise CatsOkError( "Could not connect to command port")
         self.t1.setblocking( 1)
@@ -285,7 +285,7 @@ class CatsOk:
 
         self.t2 = socket.socket( socket.AF_INET, socket.SOCK_STREAM)
         try:
-            self.t2.connect( ("10.1.0.3", 10000))
+            self.t2.connect( ("10.1.19.18", 10000))
         except socket.error:
             raise CatsOkError( "Could not connect to status port")
         self.t2.setblocking( 1)
@@ -338,7 +338,7 @@ class CatsOk:
             "state"     : { "period" : 0.5, "last" : None, "rqstCnt" : 0, "rcvdCnt" : 0},
             "io"        : { "period" : 0.5, "last" : None, "rqstCnt" : 0, "rcvdCnt" : 0},
             "position"  : { "period" : 30, "last" : None, "rqstCnt" : 0, "rcvdCnt" : 0},
-            "message"   : { "period" : 30, "last" : None, "rqstCnt" : 0, "rcvdCnt" : 0}
+            "message"   : { "period" : 0.5, "last" : None, "rqstCnt" : 0, "rcvdCnt" : 0}
             }
 
         # self.MD2 = Bang.Sphere( Bang.Point( 0.5, 0.5, 0.5), 0.5)
