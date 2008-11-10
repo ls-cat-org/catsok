@@ -84,7 +84,7 @@ class CatsOk:
     needAirRights = False
     haveAirRights = False
     pathsNeedingAirRights = [
-        "FromMD2", "ToMD2", "MD2CheckPointWaitingForAirRights"
+        "put", "put_bcrd", "get", "getput", "getput_bcrd"
         ]
 
     CATSOkRelayPVName = '21:F1:pmac10:acc65e:1:bo0'
@@ -356,6 +356,8 @@ class CatsOk:
 
     def run( self):
         runFlag = True
+        self.pushCmd( "vdi90off")
+
         while( runFlag):
             for ( fd, event) in self.p.poll( 100):
                 runFlag = runFlag and self.fan[fd](event)
@@ -382,7 +384,7 @@ class CatsOk:
 
             if runFlag and not self.needAirRights and self.haveAirRights:
                 self.db.query( "select px.dropRobotAirRights()")    # drop rights and send notify that sample is ready (if it is)
-
+                self.pushCmd( "vdi90off")
                 self.haveAirRights = False
 
         self.close()
