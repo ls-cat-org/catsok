@@ -467,7 +467,7 @@ class CatsOk:
 
         # give up air rights on falling edge of Pr2
         lastPr2 = self.Pr2
-        self.Pr2 = do[6] == "1"
+        self.Pr2 = do[5] == "1"
         if lastPr2 and not self.Pr2:
             self.needAirRights = False
         
