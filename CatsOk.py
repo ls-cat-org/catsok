@@ -350,7 +350,7 @@ class CatsOk:
             "do"        : { "period" : 0.5, "last" : None, "rqstCnt" : 0, "rcvdCnt" : 0},
             "di"        : { "period" : 0.6, "last" : None, "rqstCnt" : 0, "rcvdCnt" : 0},
             # "position"  : { "period" : 0.5, "last" : None, "rqstCnt" : 0, "rcvdCnt" : 0},
-            "message"   : { "period" : 30, "last" : None, "rqstCnt" : 0, "rcvdCnt" : 0}
+            "message"   : { "period" : 0.65, "last" : None, "rqstCnt" : 0, "rcvdCnt" : 0}
             }
 
         # self.MD2 = Bang.Sphere( Bang.Point( 0.5, 0.5, 0.5), 0.5)
