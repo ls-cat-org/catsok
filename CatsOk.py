@@ -172,7 +172,7 @@ class CatsOk:
 
         if event & (select.POLLIN | select.POLLPRI):
             # Kludge to allow time for notify to actually get here.  (Why is this needed?)
-            time.sleep( 0.1)
+            time.sleep( 0.2)
 
             #
             # Eat up any accumulated notifies
@@ -442,7 +442,7 @@ class CatsOk:
 
         self.robotOn = a[0]      == "1"
         self.robotInRemote= a[1] == "1"
-        self.robotError = a[2]   == "0"
+        self.robotError = a[2]   == "1"
 
         # things to do when in remote mode
         if self.robotInRemote:
