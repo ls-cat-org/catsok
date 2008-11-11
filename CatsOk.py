@@ -88,6 +88,10 @@ class CatsOk:
     needAirRights = False
     haveAirRights = False
 
+    robotOn = None
+    robotInRemote = None
+    robotError = None
+
     CATSOkRelayPVName = '21:F1:pmac10:acc65e:1:bo0'
     CATSOkRelayPV     = None            # the epics pv of our relay
     termstr = "\r"      # character expected to terminate cats response
@@ -279,10 +283,17 @@ class CatsOk:
         # See if we are on a path that requires air rights
 
         #
+        # establish connecitons to database server
+        self.db = _Q()
+
+        #
         # establish connections to CATS sockets
+        qr = self.db.query("select px.getcatsaddr() as a")
+        catsaddr = qr.dictresult()[0]["a"]
+
         self.t1 = socket.socket( socket.AF_INET, socket.SOCK_STREAM)
         try:
-            self.t1.connect( ("10.1.19.19", 1000))
+            self.t1.connect( ( catsaddr, 1000))
         except socket.error:
             raise CatsOkError( "Could not connect to command port")
         self.t1.setblocking( 1)
@@ -290,19 +301,11 @@ class CatsOk:
 
         self.t2 = socket.socket( socket.AF_INET, socket.SOCK_STREAM)
         try:
-            self.t2.connect( ("10.1.19.19", 10000))
+            self.t2.connect( ( catsaddr, 10000))
         except socket.error:
             raise CatsOkError( "Could not connect to status port")
         self.t2.setblocking( 1)
 
-        #
-        # establish connecitons to database server
-        #self.db = pg.connect(dbname='ls',user='lsuser', host='10.1.0.3')
-        self.db = _Q()
-        #self.db.query( "PREPARE io_noArgs AS select cats.setio()")
-        #self.db.query( "PREPARE position_noArgs AS select cats.setposition()")
-        #self.db.query( "PREPARE message_noArgs AS select cats.setmessage()")
-        #self.db.query( "PREPARE state_noArgs AS select cats.setstate()")
         #
         # Listen to db requests
         self.db.query( "select cats.init()")
@@ -436,6 +439,17 @@ class CatsOk:
         #( a[0], a[1], a[2], a[3], a[4], a[5], a[6], a[7], a[8], a[9], a[10], a[11], a[12], a[13], a[14])
         self.db.query( qs)
         self.statusStateLast = s
+
+        self.robotOn = a[0]      == "1"
+        self.robotInRemote= a[1] == "1"
+        self.robotError = a[2]   == "1"
+
+        # things to do when in remote mode
+        if self.robotInRemote:
+            if self.robotError:
+                self.pushCmd( "reset")
+            else if not self.robotOn:
+                self.pushCmd( "on")
 
         # Nab air rights when we embark on a path requiring them
         if not self.haveAirRights:
