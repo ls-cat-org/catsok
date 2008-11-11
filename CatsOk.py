@@ -91,6 +91,7 @@ class CatsOk:
     robotOn = None
     robotInRemote = None
     robotError = None
+    diES       = None
 
     CATSOkRelayPVName = '21:F1:pmac10:acc65e:1:bo0'
     CATSOkRelayPV     = None            # the epics pv of our relay
@@ -444,7 +445,7 @@ class CatsOk:
 
         # things to do when in remote mode
         if self.robotInRemote:
-            if self.robotError:
+            if self.robotError or not self.diES:
                 self.pushCmd( "reset")
             elif not self.robotOn:
                 self.pushCmd( "on")
@@ -475,7 +476,8 @@ class CatsOk:
     def statusDiParse( self, s):
         self.srqst["di"]["rcvdCnt"] = self.srqst["di"]["rcvdCnt"] + 1
         print "di: ", s
-
+        di = s[s.find("(")+1:s.find(")")]
+        self.diES  = di[1] == "1"
 
     def statusIoParse( self, s):
         self.srqst["io"]["rcvdCnt"] = self.srqst["io"]["rcvdCnt"] + 1
