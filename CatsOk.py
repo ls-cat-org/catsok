@@ -403,10 +403,6 @@ class CatsOk:
 
     def statusStateParse( self, s):
         self.srqst["state"]["rcvdCnt"] = self.srqst["state"]["rcvdCnt"] + 1
-        if self.statusStateLast != None and self.statusStateLast == s:
-            #self.db.query( "execute state_noArgs")
-            #self.db.query( "select cats.setstate()")
-            return
 
         # One line command to an argument list
         a = s[s.find("(")+1 : s.find(")")].split(',')
@@ -415,30 +411,29 @@ class CatsOk:
             print s
             raise CatsOkError( 'Wrong number of arguments received in status state response: got %d, exptected 15' % (len(a)))
         #                            0            1            2             3           4          5   6   7   8   9  10   11         12           13           14
-        b = []
-        i = 0
-        #             0           1           2         3       4         5      6       7       8        9     10        11        12          13         14
-        aType = ["::boolean","::boolean","::boolean","::text","::text","::int","::int","::int","::int","::int","::int","::text","::boolean","::boolean","::boolean"]
-        qs = "select cats.setstate( "
+        if self.statusStateLast == None or self.statusStateLast != s:
+            b = []
+            i = 0
+            #             0           1           2         3       4         5      6       7       8        9     10        11        12          13         14
+            aType = ["::boolean","::boolean","::boolean","::text","::text","::int","::int","::int","::int","::int","::int","::text","::boolean","::boolean","::boolean"]
+            qs = "select cats.setstate( "
 
-        needComma = False
-        for zz in a:
-            if zz == None or len(zz) == 0:
-                b.append("NULL")
-            else:
-                b.append( "'%s'%s" % (zz, aType[i]))
+            needComma = False
+            for zz in a:
+                if zz == None or len(zz) == 0:
+                    b.append("NULL")
+                else:
+                    b.append( "'%s'%s" % (zz, aType[i]))
 
-            if needComma:
-                qs = qs+","
-            qs = qs + b[i]
-            i = i+1
-            needComma = True
+                if needComma:
+                    qs = qs+","
+                qs = qs + b[i]
+                i = i+1
+                needComma = True
 
-        qs = qs + ")"
-        #qs = "select cats.setstate( '%s'::boolean, '%s'::boolean, '%s'::boolean, '%s'::text, '%s'::text, '%s', '%s', '%s', '%s', '%s', '%s', '%s'::text, '%s'::boolean, '%s'::boolean, '%s'::boolean)" % \
-        #( a[0], a[1], a[2], a[3], a[4], a[5], a[6], a[7], a[8], a[9], a[10], a[11], a[12], a[13], a[14])
-        self.db.query( qs)
-        self.statusStateLast = s
+            qs = qs + ")"
+            self.db.query( qs)
+            self.statusStateLast = s
 
         self.robotOn = a[0]      == "1"
         print "robotOn: ", self.robotOn
