@@ -478,6 +478,7 @@ class CatsOk:
         print "di: ", s
         di = s[s.find("(")+1:s.find(")")]
         self.diES  = di[1] == "1"
+        print "diES: ", self.diES
 
     def statusIoParse( self, s):
         self.srqst["io"]["rcvdCnt"] = self.srqst["io"]["rcvdCnt"] + 1
