@@ -442,7 +442,7 @@ class CatsOk:
 
         self.robotOn = a[0]      == "1"
         self.robotInRemote= a[1] == "1"
-        self.robotError = a[2]   == "1"
+        self.robotError = a[2]   == "0"
 
         # things to do when in remote mode
         if self.robotInRemote:
