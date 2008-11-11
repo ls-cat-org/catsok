@@ -448,7 +448,7 @@ class CatsOk:
         if self.robotInRemote:
             if self.robotError:
                 self.pushCmd( "reset")
-            else if not self.robotOn:
+            elif not self.robotOn:
                 self.pushCmd( "on")
 
         # Nab air rights when we embark on a path requiring them
