@@ -441,8 +441,11 @@ class CatsOk:
         self.statusStateLast = s
 
         self.robotOn = a[0]      == "1"
+        print "robotOn: ", self.robotOn
         self.robotInRemote= a[1] == "1"
+        print "robotInRemote: ", self.robotInRemote
         self.robotError = a[2]   == "1"
+        print "robotError: ", self.robotError
 
         # things to do when in remote mode
         if self.robotInRemote:
