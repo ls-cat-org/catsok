@@ -442,6 +442,8 @@ class CatsOk:
         print "robotInRemote: ", self.robotInRemote
         self.robotError = a[2]   == "1"
         print "robotError: ", self.robotError
+        print "needAirRights: ", self.needAirRights
+        print "haveAirRights: ", self.haveAirRights
 
         # things to do when in remote mode
         if self.robotInRemote:
