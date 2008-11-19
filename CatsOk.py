@@ -46,6 +46,7 @@ class _Q:
             # ping the server
             qr = self.db.query(qs)
         except:
+            print "Failed query: %s" % (qs)
             if self.db.status == 1:
                 print >> sys.stderr, sys.exc_info()[0]
                 print >> sys.stderr, '-'*60
@@ -85,6 +86,7 @@ class CatsOk:
         "put", "put_bcrd", "get", "getput", "getput_bcrd"
         ]
 
+    lastPathName  = ""
     needAirRights = False
     haveAirRights = False
 
@@ -244,7 +246,7 @@ class CatsOk:
             # Assume we have the full response
             self.waiting = False
 
-            print "Status Received:", newStr.strip()
+            #print "Status Received:", newStr.strip()
 
             #
             # add what we have from what was left over from last time
@@ -275,7 +277,7 @@ class CatsOk:
         if event & select.POLLOUT:
             s = self.popStatus()
             if s != None:
-                print "status request: ", s
+                #print "status request: ", s
                 self.t2.send( s + self.termstr)
 
         return True
@@ -337,11 +339,11 @@ class CatsOk:
         #
         # Set up sFan to handle status socket messages
         self.sFan = {
-            "state"    : self.statusStateParse,
-            "io"       : self.statusIoParse,
-            "di"       : self.statusDiParse,
-            "do"       : self.statusDoParse,
-            "position" : self.statusPositionParse,
+            "state("    : self.statusStateParse,
+            "io("       : self.statusIoParse,
+            "di("       : self.statusDiParse,
+            "do("       : self.statusDoParse,
+            "position(" : self.statusPositionParse,
             "config"   : self.statusConfigParse
             }
 
@@ -394,11 +396,13 @@ class CatsOk:
                 if rslt == "t":
                     self.haveAirRights = True
                     self.pushCmd( "vdi90on")
+                    print "received haveAirRights and setting vdi90on"
 
             if runFlag and not self.needAirRights and self.haveAirRights:
                 self.db.query( "select px.dropRobotAirRights()")    # drop rights and send notify that sample is ready (if it is)
                 self.pushCmd( "vdi90off")
                 self.haveAirRights = False
+                print "dropped Air Rights and setting vdi90off"
 
         self.close()
 
@@ -409,7 +413,7 @@ class CatsOk:
         a = s[s.find("(")+1 : s.find(")")].split(',')
 
         if len(a) != 15:
-            print s
+            #print s
             raise CatsOkError( 'Wrong number of arguments received in status state response: got %d, exptected 15' % (len(a)))
         #                            0            1            2             3           4          5   6   7   8   9  10   11         12           13           14
         if self.statusStateLast == None or self.statusStateLast != s:
@@ -437,14 +441,14 @@ class CatsOk:
             self.statusStateLast = s
 
         self.robotOn = a[0]      == "1"
-        print "robotOn: ", self.robotOn
+        #print "robotOn: ", self.robotOn
         self.robotInRemote= a[1] == "1"
-        print "robotInRemote: ", self.robotInRemote
+        #print "robotInRemote: ", self.robotInRemote
         self.robotError = a[2]   == "1"
-        print "robotError: ", self.robotError
-        print "Pr2:", self.Pr2
-        print "needAirRights: ", self.needAirRights
-        print "haveAirRights: ", self.haveAirRights
+        #print "robotError: ", self.robotError
+        #print "Pr2:", self.Pr2
+        #print "needAirRights: ", self.needAirRights
+        #print "haveAirRights: ", self.haveAirRights
 
         # things to do when in remote mode
         if self.robotInRemote:
@@ -454,34 +458,49 @@ class CatsOk:
                 self.pushCmd( "on")
 
         # Nab air rights when we embark on a path requiring them
-        if not self.haveAirRights:
-            pathName = a[4];
+        pathName = a[4];
+        if self.lastPathName != pathName and not self.haveAirRights:
             try:
                 ndx = self.pathsNeedingAirRights.index(pathName)
             except ValueError:
                 self.needAirRights = False
+                if pathName != "":
+                    print "Current path '%s' does not need air rights" % (pathName)
+                else:
+                    print "No path running"
             else:
+                print "Need Air Rights for path '%s'" % (pathName)
                 self.needAirRights = True
+        self.lastPathName = pathName
 
     def statusDoParse( self, s):
         self.srqst["do"]["rcvdCnt"] = self.srqst["do"]["rcvdCnt"] + 1
-        print "do:", s
+        #print "do:", s
         do = s[s.find("(")+1:s.find(")")]
+        if do[0] != "1" and do[0] != "0":
+            print "Bad 'do' returned: %s" % (do)
+            return
+        else:
+            qs = "select cats.setdo( b'%s')" % (do)
+            self.db.query( qs)
 
         # give up air rights on falling edge of Pr2
         lastPr2 = self.Pr2
         self.Pr2 = do[5] == "1"
         if lastPr2 and not self.Pr2:
             self.needAirRights = False
-        
 
 
     def statusDiParse( self, s):
         self.srqst["di"]["rcvdCnt"] = self.srqst["di"]["rcvdCnt"] + 1
-        print "di: ", s
+        #print "di: ", s
         di = s[s.find("(")+1:s.find(")")]
+
+        qs = "select cats.setdi( b'%s')" % (di)
+        self.db.query( qs)
+
         self.diES  = di[1] == "1"
-        print "diES: ", self.diES
+        #print "diES: ", self.diES
 
     def statusIoParse( self, s):
         self.srqst["io"]["rcvdCnt"] = self.srqst["io"]["rcvdCnt"] + 1
@@ -498,7 +517,7 @@ class CatsOk:
         c = b.replace( "0", "'f'")
 
         qs = "select cats.setio( %s)" % (c)
-        print s,qs
+        #print s,qs
         self.db.query( qs)
         self.statusIoLast = s
         
