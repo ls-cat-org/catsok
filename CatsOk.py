@@ -84,7 +84,7 @@ class CatsOk:
     needAirRights = False
     haveAirRights = False
     pathsNeedingAirRights = [
-        "FromMD2", "ToMD2", "MD2CheckPointWaitingForAirRights"
+        "put", "put_bcrd", "get", "getput", "getput_bcrd"
         ]
 
     CATSOkRelayPVName = '21:F1:pmac10:acc65e:1:bo0'
@@ -330,6 +330,8 @@ class CatsOk:
         self.sFan = {
             "state"    : self.statusStateParse,
             "io"       : self.statusIoParse,
+            "di"       : self.statusDiParse,
+            "do"       : self.statusDoParse,
             "position" : self.statusPositionParse,
             "config"   : self.statusConfigParse
             }
@@ -337,8 +339,10 @@ class CatsOk:
         self.srqst = {
             "state"     : { "period" : 0.5, "last" : None, "rqstCnt" : 0, "rcvdCnt" : 0},
             "io"        : { "period" : 0.5, "last" : None, "rqstCnt" : 0, "rcvdCnt" : 0},
+            "di"        : { "period" : 0.5, "last" : None, "rqstCnt" : 0, "rcvdCnt" : 0},
+            "do"        : { "period" : 0.5, "last" : None, "rqstCnt" : 0, "rcvdCnt" : 0},
             "position"  : { "period" : 30, "last" : None, "rqstCnt" : 0, "rcvdCnt" : 0},
-            "message"   : { "period" : 0.5, "last" : None, "rqstCnt" : 0, "rcvdCnt" : 0}
+            "message"   : { "period" : 30, "last" : None, "rqstCnt" : 0, "rcvdCnt" : 0}
             }
 
         # self.MD2 = Bang.Sphere( Bang.Point( 0.5, 0.5, 0.5), 0.5)
@@ -356,6 +360,8 @@ class CatsOk:
 
     def run( self):
         runFlag = True
+        self.pushCmd( "vdi90off")
+
         while( runFlag):
             for ( fd, event) in self.p.poll( 100):
                 runFlag = runFlag and self.fan[fd](event)
@@ -382,7 +388,7 @@ class CatsOk:
 
             if runFlag and not self.needAirRights and self.haveAirRights:
                 self.db.query( "select px.dropRobotAirRights()")    # drop rights and send notify that sample is ready (if it is)
-
+                self.pushCmd( "vdi90off")
                 self.haveAirRights = False
 
         self.close()
@@ -395,7 +401,8 @@ class CatsOk:
             return
 
         # One line command to an argument list
-        a = s.partition( '(')[2].partition( ')')[0].split(',')
+        a = s[s.find("(")+1 : s.find(")")].split(',')
+
         if len(a) != 15:
             print s
             raise CatsOkError( 'Wrong number of arguments received in status state response: got %d, exptected 15' % (len(a)))
@@ -434,6 +441,15 @@ class CatsOk:
         else:
             self.needAirRights = True
 
+    def statusDoParse( self, s):
+        self.srqst["do"]["rcvdCnt"] = self.srqst["do"]["rcvdCnt"] + 1
+        print "do:", s
+
+    def statusDiParse( self, s):
+        self.srqst["di"]["rcvdCnt"] = self.srqst["di"]["rcvdCnt"] + 1
+        print "di: ", s
+
+
     def statusIoParse( self, s):
         self.srqst["io"]["rcvdCnt"] = self.srqst["io"]["rcvdCnt"] + 1
         if self.statusIoLast != None and self.statusIoLast == s:
@@ -443,7 +459,8 @@ class CatsOk:
 
         # One line command to pull out the arguments as one string
         # hope this is in the right format to send to postresql server
-        a = s.partition( '(')[2].partition( ')')[0]
+
+        a = s[s.find("(")+1:s.find(")")]
         b = a.replace( "1", "'t'")
         c = b.replace( "0", "'f'")
 
@@ -461,7 +478,8 @@ class CatsOk:
             return
 
         # One line command to an argument list
-        a = s.partition( '(')[2].partition( ')')[0].split(',')
+        a = s[s.find("(")+1 : s.find(")")].split(',')
+
         if len(a) != 6:
             raise CatsOkError( 'Wrong number of arguments received in status state response: got %d, exptected 14' % (len(a)))
         #                               0   1   2   3   4  5
