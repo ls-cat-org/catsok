@@ -204,7 +204,63 @@ CREATE OR REPLACE FUNCTION px.setTooledSample( tool text, lid int, sampleno int)
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 ALTER FUNCTION px.setTooledSample( text, int, int) OWNER TO lsadmin;
 
+CREATE TABLE cats.do (
+       doKey serial primary key,
+       doTSStart    timestamp with time zone default now(),
+       doTSLast     timestamp with time zone default now(),
+       doStn bigint references px.stations (stnKey),
+       doo bit(55)
+);
+ALTER TABLE cats.do OWNER TO lsadmin;
 
+CREATE OR REPLACE FUNCTION cats.doInsertTF() returns trigger AS $$
+  DECLARE
+    prev record;
+  BEGIN
+    SELECT * INTO prev FROM cats.do WHERE dostn=px.getStation() ORDER BY doKey DESC LIMIT 1;
+    IF FOUND AND prev.doo=NEW.doo THEN
+      UPDATE cats.do SET doTSLast=now() WHERE doKey=prev.doKey;
+      RETURN NULL;
+    END IF;
+    return NEW;
+  END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+ALTER FUNCTION cats.doInsertTF() OWNER TO lsadmin;
+CREATE TRIGGER doInsertTrigger BEFORE INSERT ON cats.do FOR EACH ROW EXECUTE PROCEDURE cats.doInsertTF();
+
+CREATE OR REPLACE FUNCTION cats.setdo( theDo bit(99)) RETURNS VOID AS $$
+  INSERT INTO cats.do (doStn, doo) VALUES (px.getStation(), $1);
+$$ LANGUAGE SQL SECURITY DEFINER;
+ALTER FUNCTION cats.setdo( bit(99)) OWNER TO lsadmin;
+
+CREATE TABLE cats.di (
+       diKey serial primary key,
+       diTSStart    timestamp with time zone default now(),
+       diTSLast     timestamp with time zone default now(),
+       diStn bigint references px.stations (stnKey),
+       dii bit(99)
+);
+ALTER TABLE cats.di OWNER TO lsadmin;
+
+CREATE OR REPLACE FUNCTION cats.diInsertTF() returns trigger AS $$
+  DECLARE
+    prev record;
+  BEGIN
+    SELECT * INTO prev FROM cats.di WHERE distn=px.getStation() ORDER BY diKey DESC LIMIT 1;
+    IF FOUND AND prev.dii=NEW.dii THEN
+      UPDATE cats.di SET diTSLast=now() WHERE diKey=prev.diKey;
+      RETURN NULL;
+    END IF;
+    return NEW;
+  END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+ALTER FUNCTION cats.diInsertTF() OWNER TO lsadmin;
+CREATE TRIGGER diInsertTrigger BEFORE INSERT ON cats.di FOR EACH ROW EXECUTE PROCEDURE cats.diInsertTF();
+
+CREATE OR REPLACE FUNCTION cats.setdi( theDi bit(99)) RETURNS VOID AS $$
+  INSERT INTO cats.di (diStn, dii) VALUES (px.getStation(), $1);
+$$ LANGUAGE SQL SECURITY DEFINER;
+ALTER FUNCTION cats.setdi( bit(99)) OWNER TO lsadmin;
 
 CREATE TABLE cats.io (
        ioKey serial primary key,
@@ -672,20 +728,23 @@ ALTER TABLE cats._queue OWNER TO lsadmin;
 
 CREATE OR REPLACE FUNCTION cats._pushqueue( cmd text) RETURNS VOID AS $$
   DECLARE
-    c text;	-- trimmed command
-    ntfy text;	-- used to generate notify command
+    c text;	    -- trimmed command
+    ntfy text;	    -- used to generate notify command
+    theRobot inet;  -- address of CatsOk routine
   BEGIN
-    SELECT cnotifyrobot INTO ntfy FROM px._config LEFT JOIN px.stations ON cstation=stnname WHERE stnkey=px.getstation();
+    SELECT cnotifyrobot, crobot INTO ntfy, theRobot FROM px._config LEFT JOIN px.stations ON cstation=stnname WHERE stnkey=px.getstation();
     IF NOT FOUND THEN
       RETURN;
     END IF;
     c := trim( cmd);
     IF length( c) > 0 THEN
-      INSERT INTO cats._queue (qcmd, qaddr)
-        SELECT c, crobot
-          FROM px._config
-          WHERE cdiffractometer=inet_client_addr() or cdetector=inet_client_addr() or crobot=inet_client_addr()
-          LIMIT 1;
+      --
+      -- Delete remaining commands in the queue during an abort or panic
+      IF lower(c) = 'abort' or lower(c) = 'panic'  THEN
+        DELETE FROM cats._queue WHERE qaddr = theRobot;
+      END IF;
+
+      INSERT INTO cats._queue (qcmd, qaddr) VALUES (c, theRobot);
       IF FOUND THEN
         EXECUTE 'NOTIFY ' || ntfy;
       ELSE
@@ -877,7 +936,7 @@ CREATE OR REPLACE FUNCTION cats._mkcryocmd( theCmd text, theId int, theNewId int
     -- theId is zero for an "get".  Here we need to get the tool number from the current state
     --
     IF theId = 0 THEN
-      SELECT cttoolno INTO rtool1 FROM cats._cylinder2tool LEFT JOIN cats.states ON ctToolName=csToolNumber WHERE csstn=px.getStation() ORDER BY ctKey DESC LIMIT 1;
+      SELECT cttoolno INTO rtool1 FROM cats.states LEFT JOIN cats._cylinder2tool ON ctToolName=csToolNumber WHERE csstn=px.getStation() ORDER BY csKey desc LIMIT 1;
       IF FOUND THEN
         UPDATE cats._args SET aCap=rtool1 WHERE aKey=currval('cats._args_akey_seq');
       END IF;
@@ -957,10 +1016,27 @@ CREATE OR REPLACE FUNCTION cats.get( x int, y int, z int) returns int AS $$
 $$ LANGUAGE sql SECURITY DEFINER;
 ALTER FUNCTION cats.get( int, int, int) OWNER TO lsadmin;
 
-CREATE OR REPLACE FUNCTION cats.getput( theId int, x int, y int, z int) returns int AS $$
-  SELECT cats._mkcryocmd( 'getput', $1, 0, $2, $3, $4);
-$$ LANGUAGE sql SECURITY DEFINER;
+CREATE OR REPLACE FUNCTION cats.getput( theId int, xx int, yy int, zz int) returns int AS $$
+  DECLARE
+    rtn int;
+    tool1 int;
+    tool2 int;
+  BEGIN
+    tool1 := px.getCurrentSampleID() & x'00ff0000'::int;
+    tool2 := theId                   & x'00ff0000'::int;
+    IF tool1 != tool2 THEN
+      PERFORM cats.get( xx, yy, zz);
+      SELECT cats.put( theId, xx, yy, zz) INTO rtn;
+    ELSE
+      SELECT cats._mkcryocmd( 'getput', theId, 0, xx, yy, zz) INTO rtn;
+    END IF;
+    return rtn;
+  END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
 ALTER FUNCTION cats.getput( int, int, int, int) OWNER TO lsadmin;
+
+
+
 
 CREATE OR REPLACE FUNCTION cats.getput_bcrd( theId int, x int, y int, z int) returns int AS $$
   SELECT cats._mkcryocmd( 'getput_bcrd', $1, 0, $2, $3, $4);
@@ -992,6 +1068,11 @@ CREATE OR REPLACE FUNCTION cats.home( theId int) returns int AS $$
 $$ LANGUAGE sql SECURITY DEFINER;
 ALTER FUNCTION cats.home( int) OWNER TO lsadmin;
 
+CREATE OR REPLACE FUNCTION cats.back( theId int) returns int AS $$
+  SELECT cats._mkcryocmd( 'back', $1, 0, 0, 0, 0);
+$$ LANGUAGE sql SECURITY DEFINER;
+ALTER FUNCTION cats.back( int) OWNER TO lsadmin;
+
 CREATE OR REPLACE FUNCTION cats.safe( theId int) returns int AS $$
   SELECT cats._mkcryocmd( 'safe', $1, 0, 0, 0, 0);
 $$ LANGUAGE sql SECURITY DEFINER;
@@ -1002,4 +1083,123 @@ CREATE OR REPLACE FUNCTION cats.reference( ) returns int AS $$
 $$ LANGUAGE sql SECURITY DEFINER;
 ALTER FUNCTION cats.reference( ) OWNER TO lsadmin;
 
-commit;
+CREATE OR REPLACE FUNCTION cats.openlid1() returns void AS $$
+  SELECT cats._pushqueue( 'openlid1');
+$$ LANGUAGE SQL SECURITY DEFINER;
+ALTER FUNCTION cats.openlid1() OWNER TO lsadmin;
+  
+CREATE OR REPLACE FUNCTION cats.openlid2() returns void AS $$
+  SELECT cats._pushqueue( 'openlid2');
+$$ LANGUAGE SQL SECURITY DEFINER;
+ALTER FUNCTION cats.openlid2() OWNER TO lsadmin;
+  
+
+CREATE OR REPLACE FUNCTION cats.openlid3() returns void AS $$
+  SELECT cats._pushqueue( 'openlid3');
+$$ LANGUAGE SQL SECURITY DEFINER;
+ALTER FUNCTION cats.openlid3() OWNER TO lsadmin;
+  
+CREATE OR REPLACE FUNCTION cats.closelid1() returns void AS $$
+  SELECT cats._pushqueue( 'closelid1');
+$$ LANGUAGE SQL SECURITY DEFINER;
+ALTER FUNCTION cats.closelid1() OWNER TO lsadmin;
+  
+CREATE OR REPLACE FUNCTION cats.closelid2() returns void AS $$
+  SELECT cats._pushqueue( 'closelid2');
+$$ LANGUAGE SQL SECURITY DEFINER;
+ALTER FUNCTION cats.closelid2() OWNER TO lsadmin;
+  
+
+CREATE OR REPLACE FUNCTION cats.closelid3() returns void AS $$
+  SELECT cats._pushqueue( 'closelid3');
+$$ LANGUAGE SQL SECURITY DEFINER;
+ALTER FUNCTION cats.closelid3() OWNER TO lsadmin;
+  
+CREATE OR REPLACE FUNCTION cats.opentool() returns void AS $$
+  SELECT cats._pushqueue( 'opentool');
+$$ LANGUAGE SQL SECURITY DEFINER;
+ALTER FUNCTION cats.opentool() OWNER TO lsadmin;
+
+CREATE OR REPLACE FUNCTION cats.closetool() returns void AS $$
+  SELECT cats._pushqueue( 'closetool');
+$$ LANGUAGE SQL SECURITY DEFINER;
+ALTER FUNCTION cats.closetool() OWNER TO lsadmin;
+
+CREATE OR REPLACE FUNCTION cats.magneton() returns void AS $$
+  SELECT cats._pushqueue( 'magneton');
+$$ LANGUAGE SQL SECURITY DEFINER;
+ALTER FUNCTION cats.magneton() OWNER TO lsadmin;
+
+CREATE OR REPLACE FUNCTION cats.magnetoff() returns void AS $$
+  SELECT cats._pushqueue( 'magnetoff');
+$$ LANGUAGE SQL SECURITY DEFINER;
+ALTER FUNCTION cats.magnetoff() OWNER TO lsadmin;
+
+CREATE OR REPLACE FUNCTION cats.heateron() returns void AS $$
+  SELECT cats._pushqueue( 'heateron');
+$$ LANGUAGE SQL SECURITY DEFINER;
+ALTER FUNCTION cats.heateron() OWNER TO lsadmin;
+
+CREATE OR REPLACE FUNCTION cats.heateroff() returns void AS $$
+  SELECT cats._pushqueue( 'heateroff');
+$$ LANGUAGE SQL SECURITY DEFINER;
+ALTER FUNCTION cats.heateroff() OWNER TO lsadmin;
+
+CREATE OR REPLACE FUNCTION cats.regulon() returns void AS $$
+  SELECT cats._pushqueue( 'regulon');
+$$ LANGUAGE SQL SECURITY DEFINER;
+ALTER FUNCTION cats.regulon() OWNER TO lsadmin;
+
+CREATE OR REPLACE FUNCTION cats.reguloff() returns void AS $$
+  SELECT cats._pushqueue( 'reguloff');
+$$ LANGUAGE SQL SECURITY DEFINER;
+ALTER FUNCTION cats.reguloff() OWNER TO lsadmin;
+
+
+CREATE OR REPLACE FUNCTION cats.warmon() returns void AS $$
+  SELECT cats._pushqueue( 'warmon');
+$$ LANGUAGE SQL SECURITY DEFINER;
+ALTER FUNCTION cats.warmon() OWNER TO lsadmin;
+
+CREATE OR REPLACE FUNCTION cats.warmoff() returns void AS $$
+  SELECT cats._pushqueue( 'warmoff');
+$$ LANGUAGE SQL SECURITY DEFINER;
+ALTER FUNCTION cats.warmoff() OWNER TO lsadmin;
+
+
+CREATE OR REPLACE FUNCTION cats.on() returns void AS $$
+  SELECT cats._pushqueue( 'on');
+$$ LANGUAGE SQL SECURITY DEFINER;
+ALTER FUNCTION cats.on() OWNER TO lsadmin;
+
+CREATE OR REPLACE FUNCTION cats.off() returns void AS $$
+  SELECT cats._pushqueue( 'off');
+$$ LANGUAGE SQL SECURITY DEFINER;
+ALTER FUNCTION cats.off() OWNER TO lsadmin;
+
+CREATE OR REPLACE FUNCTION cats.abort() returns void AS $$
+  SELECT cats._pushqueue( 'abort');
+$$ LANGUAGE SQL SECURITY DEFINER;
+ALTER FUNCTION cats.abort() OWNER TO lsadmin;
+
+CREATE OR REPLACE FUNCTION cats.reset() returns void AS $$
+  SELECT cats._pushqueue( 'reset');
+$$ LANGUAGE SQL SECURITY DEFINER;
+ALTER FUNCTION cats.reset() OWNER TO lsadmin;
+
+
+CREATE OR REPLACE FUNCTION cats.panic() returns void AS $$
+  SELECT cats._pushqueue( 'panic');
+$$ LANGUAGE SQL SECURITY DEFINER;
+ALTER FUNCTION cats.panic() OWNER TO lsadmin;
+
+CREATE OR REPLACE FUNCTION cats.pause() returns void AS $$
+  SELECT cats._pushqueue( 'pause');
+$$ LANGUAGE SQL SECURITY DEFINER;
+ALTER FUNCTION cats.pause() OWNER TO lsadmin;
+
+CREATE OR REPLACE FUNCTION cats.restart() returns void AS $$
+  SELECT cats._pushqueue( 'restart');
+$$ LANGUAGE SQL SECURITY DEFINER;
+ALTER FUNCTION cats.restart() OWNER TO lsadmin;
+
