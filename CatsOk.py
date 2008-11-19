@@ -82,10 +82,13 @@ class CatsOk:
     """
     Monitors status of the cats robot, updates database, and controls CatsOk lock
     """
+    workingPath = ""    # path we are currently running
+    afterCmd    = None
     pathsNeedingAirRights = [
         "put", "put_bcrd", "get", "getput", "getput_bcrd"
         ]
 
+    dbFlag       = True        # indicates a command might still be in the queue
     lastPathName  = ""
     needAirRights = False
     haveAirRights = False
@@ -155,6 +158,9 @@ class CatsOk:
 
     def pushCmd( self, cmd):
         print "pushing command '%s'" % (cmd)
+        if cmd == 'abort' or cmd == 'panic':
+            self.cmdQueue = []
+            self.afterCmd = None
         self.cmdQueue.append( cmd)
         self.p.register( self.t1, select.POLLIN | select.POLLPRI | select.POLLOUT)
 
@@ -171,12 +177,9 @@ class CatsOk:
     def dbService( self, event):
 
         if event & select.POLLERR:
-            self.db.reset();
+            self.db.reset()
 
         if event & (select.POLLIN | select.POLLPRI):
-            # Kludge to allow time for notify to actually get here.  (Why is this needed?)
-            time.sleep( 0.2)
-
             #
             # Eat up any accumulated notifies
             #
@@ -188,15 +191,47 @@ class CatsOk:
             #
             # grab a waiting command
             #
-            cmdFlag = True
-            while( cmdFlag):
+            self.dbFlag = True
+            while( self.dbFlag):
                 qr = self.db.query( "select cats._popqueue() as cmd")
                 r = qr.dictresult()[0]
                 if len( r["cmd"]) > 0:
-                    self.pushCmd( r["cmd"])
+                    cmd = r["cmd"]
                 else:
-                    cmdFlag = False
+                    if self.workingPath == "" and self.afterCmd != None:
+                        print "Queuing Command: ", self.afterCmd
+                        self.pushCmd( self.afterCmd)
+                        self.workingPath = self.afterCmd
+                        self.afterCmd = None
+                    self.dbFlag = False
+                    return True
 
+                #
+                # does this look like a normal path command that we might want to delay?
+                #
+                if cmd.find( "(") > 0:
+                    try:
+                        # Pick off the path name and test it against those needing air rights: We'll need a second list of commands to test if we ever want to call one that does not need air rights
+                        trialPath = cmd[0:cmd.find("(")]
+                        ndx = self.pathsNeedingAirRights.index( trialPath)
+                    except ValueError:
+                        #
+                        # No path found: just push the command and hope for the best
+                        self.pushCmd( cmd)
+                        self.workingPath = cmd
+                    else:
+                        #
+                        # We found one: save it for later if we are busy now
+                        #
+                        if self.workingPath != "":
+                            self.afterCmd = cmd
+                            print "Saving Command: ", self.afterCmd
+                        else:
+                            self.pushCmd( cmd)
+                            self.workingPath = cmd
+                else:
+                    self.pushCmd( cmd)
+                    self.workingPath = cmd
         return True
 
     #
@@ -372,22 +407,26 @@ class CatsOk:
     def run( self):
         runFlag = True
         self.pushCmd( "vdi90off")
-
+        lastDbTime = datetime.datetime.now()
         while( runFlag):
             for ( fd, event) in self.p.poll( 100):
                 runFlag = runFlag and self.fan[fd](event)
                 if not runFlag:
                     break
+            n = datetime.datetime.now()
             if runFlag and not self.waiting:
                 #
                 # queue up new requests if it is time to
-                n = datetime.datetime.now()
                 for k in self.srqst.keys():
                     r = self.srqst[k]
                     if r["last"] == None or (n - r["last"] > datetime.timedelta(0,r["period"])):
                         runFlag &= self.maybePushStatus( k)
                         r["last"] = datetime.datetime.now()
                         r["rqstCnt"] += 1
+
+            if runFlag and (self.dbFlag or (n - lastDbTime > datetime.timedelta(0, 1))):
+                    lastDbTime = n
+                    runFlag &= self.dbService( select.POLLIN)
 
             if runFlag and self.needAirRights and not self.haveAirRights:
                 qs = "select px.requestRobotAirRights() as rslt"
@@ -458,7 +497,8 @@ class CatsOk:
                 self.pushCmd( "on")
 
         # Nab air rights when we embark on a path requiring them
-        pathName = a[4];
+        pathName = a[4]
+        self.workingPath = pathName
         if self.lastPathName != pathName and not self.haveAirRights:
             try:
                 ndx = self.pathsNeedingAirRights.index(pathName)
