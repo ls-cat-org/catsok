@@ -83,10 +83,14 @@ class CatsOk:
     Monitors status of the cats robot, updates database, and controls CatsOk lock
     """
     workingPath = ""    # path we are currently running
-    afterCmd    = None
+    afterCmd    = []
     pathsNeedingAirRights = [
         "put", "put_bcrd", "get", "getput", "getput_bcrd"
         ]
+
+    sampleMounted = { "lid" : None, "sample" : None, "timestamp" : None}
+    sampleTooled  = { "lid" : None, "sample" : None, "timestamp" : None}
+    checkMountedSample = False
 
     dbFlag       = True        # indicates a command might still be in the queue
     lastPathName  = ""
@@ -160,7 +164,7 @@ class CatsOk:
         print "pushing command '%s'" % (cmd)
         if cmd == 'abort' or cmd == 'panic':
             self.cmdQueue = []
-            self.afterCmd = None
+            self.afterCmd = []
         self.cmdQueue.append( cmd)
         self.p.register( self.t1, select.POLLIN | select.POLLPRI | select.POLLOUT)
 
@@ -198,11 +202,11 @@ class CatsOk:
                 if len( r["cmd"]) > 0:
                     cmd = r["cmd"]
                 else:
-                    if self.workingPath == "" and self.afterCmd != None:
-                        print "Queuing Command: ", self.afterCmd
-                        self.pushCmd( self.afterCmd)
-                        self.workingPath = self.afterCmd
-                        self.afterCmd = None
+                    if self.workingPath == "" and len(self.afterCmd) > 0:
+                        print "Queuing Command: ", self.afterCmd[0]
+                        self.pushCmd( self.afterCmd[0])
+                        self.workingPath = self.afterCmd[0]
+                        self.afterCmd.pop(0)
                     self.dbFlag = False
                     return True
 
@@ -224,8 +228,8 @@ class CatsOk:
                         # We found one: save it for later if we are busy now
                         #
                         if self.workingPath != "":
-                            self.afterCmd = cmd
-                            print "Saving Command: ", self.afterCmd
+                            self.afterCmd.append(cmd)
+                            print "Saving Command: ", cmd
                         else:
                             self.pushCmd( cmd)
                             self.workingPath = cmd
@@ -479,15 +483,24 @@ class CatsOk:
             self.db.query( qs)
             self.statusStateLast = s
 
+
+        if self.sampleMounted["lid"] != a[7] or self.sampleMounted["sample"] != a[8]:
+            self.sampleMounted["lid"] = a[7]
+            self.sampleMounted["sample"] = a[8]
+            self.sampleMounted["timestamp"] = datetime.datetime.now()
+            self.checkMountedSample = True
+
+
+        if self.sampleTooled["lid"] != a[7] or self.sampleTooled["sample"] != a[8]:
+            self.sampleTooled["lid"] = a[7]
+            self.sampleTooled["sample"] = a[8]
+            self.sampleTooled["timestamp"] = datetime.datetime.now()
+
+
+
         self.robotOn = a[0]      == "1"
-        #print "robotOn: ", self.robotOn
         self.robotInRemote= a[1] == "1"
-        #print "robotInRemote: ", self.robotInRemote
         self.robotError = a[2]   == "1"
-        #print "robotError: ", self.robotError
-        #print "Pr2:", self.Pr2
-        #print "needAirRights: ", self.needAirRights
-        #print "haveAirRights: ", self.haveAirRights
 
         # things to do when in remote mode
         if self.robotInRemote:
@@ -512,6 +525,17 @@ class CatsOk:
                 print "Need Air Rights for path '%s'" % (pathName)
                 self.needAirRights = True
         self.lastPathName = pathName
+
+        if self.checkMountedSample and pathName != 'get' and (datetime.datetime.now() - self.sampleMounted["timestamp"] > datetime.timedelta(0,3)):
+            self.checkMountedSample = False
+            qr = self.db.query( "select px.getmagnetstate() as ms")
+            ms = qr.dictresult()[0]["ms"]
+            print "Sample Mounted: ", ms
+            print self.sampleMounted
+            if ms == "t" and (self.sampleMounted["lid"] == "" or self.sampleMounted["sample"] == ""):
+                print "Sample on diffractometer but robot thinks there isn't: aborting"
+                self.pushCmd( "abort")
+                self.needAirRights = False
 
     def statusDoParse( self, s):
         self.srqst["do"]["rcvdCnt"] = self.srqst["do"]["rcvdCnt"] + 1
