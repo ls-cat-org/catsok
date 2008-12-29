@@ -46,6 +46,7 @@ class _Q:
             # ping the server
             qr = self.db.query(qs)
         except:
+            print "Failed query: %s" % (qs)
             if self.db.status == 1:
                 print >> sys.stderr, sys.exc_info()[0]
                 print >> sys.stderr, '-'*60
@@ -81,11 +82,25 @@ class CatsOk:
     """
     Monitors status of the cats robot, updates database, and controls CatsOk lock
     """
-    needAirRights = False
-    haveAirRights = False
+    workingPath = ""    # path we are currently running
+    afterCmd    = []
     pathsNeedingAirRights = [
         "put", "put_bcrd", "get", "getput", "getput_bcrd"
         ]
+
+    sampleMounted = { "lid" : None, "sample" : None, "timestamp" : None}
+    sampleTooled  = { "lid" : None, "sample" : None, "timestamp" : None}
+    checkMountedSample = False
+
+    dbFlag       = True        # indicates a command might still be in the queue
+    lastPathName  = ""
+    needAirRights = False
+    haveAirRights = False
+
+    robotOn = None
+    robotInRemote = None
+    robotError = None
+    diES       = None
 
     CATSOkRelayPVName = '21:F1:pmac10:acc65e:1:bo0'
     CATSOkRelayPV     = None            # the epics pv of our relay
@@ -107,6 +122,7 @@ class CatsOk:
     MD2 = None          # Sphere Defining MD2 location exclusion zone
     RCap = None         # Capsule defining robot tool and arm
     RR   = 0.7          # Distance from tool tip to elbow
+    Pr2 = False         # Process Output 2: CATS requires Air Rights
 
     statusStateLast    = None
     statusIoLast       = None
@@ -146,6 +162,9 @@ class CatsOk:
 
     def pushCmd( self, cmd):
         print "pushing command '%s'" % (cmd)
+        if cmd == 'abort' or cmd == 'panic':
+            self.cmdQueue = []
+            self.afterCmd = []
         self.cmdQueue.append( cmd)
         self.p.register( self.t1, select.POLLIN | select.POLLPRI | select.POLLOUT)
 
@@ -162,12 +181,9 @@ class CatsOk:
     def dbService( self, event):
 
         if event & select.POLLERR:
-            self.db.reset();
+            self.db.reset()
 
         if event & (select.POLLIN | select.POLLPRI):
-            # Kludge to allow time for notify to actually get here.  (Why is this needed?)
-            time.sleep( 0.1)
-
             #
             # Eat up any accumulated notifies
             #
@@ -179,15 +195,47 @@ class CatsOk:
             #
             # grab a waiting command
             #
-            cmdFlag = True
-            while( cmdFlag):
+            self.dbFlag = True
+            while( self.dbFlag):
                 qr = self.db.query( "select cats._popqueue() as cmd")
                 r = qr.dictresult()[0]
                 if len( r["cmd"]) > 0:
-                    self.pushCmd( r["cmd"])
+                    cmd = r["cmd"]
                 else:
-                    cmdFlag = False
+                    if self.workingPath == "" and len(self.afterCmd) > 0:
+                        print "Queuing Command: ", self.afterCmd[0]
+                        self.pushCmd( self.afterCmd[0])
+                        self.workingPath = self.afterCmd[0]
+                        self.afterCmd.pop(0)
+                    self.dbFlag = False
+                    return True
 
+                #
+                # does this look like a normal path command that we might want to delay?
+                #
+                if cmd.find( "(") > 0:
+                    try:
+                        # Pick off the path name and test it against those needing air rights: We'll need a second list of commands to test if we ever want to call one that does not need air rights
+                        trialPath = cmd[0:cmd.find("(")]
+                        ndx = self.pathsNeedingAirRights.index( trialPath)
+                    except ValueError:
+                        #
+                        # No path found: just push the command and hope for the best
+                        self.pushCmd( cmd)
+                        self.workingPath = cmd
+                    else:
+                        #
+                        # We found one: save it for later if we are busy now
+                        #
+                        if self.workingPath != "":
+                            self.afterCmd.append(cmd)
+                            print "Saving Command: ", cmd
+                        else:
+                            self.pushCmd( cmd)
+                            self.workingPath = cmd
+                else:
+                    self.pushCmd( cmd)
+                    self.workingPath = cmd
         return True
 
     #
@@ -237,7 +285,7 @@ class CatsOk:
             # Assume we have the full response
             self.waiting = False
 
-            print "Status Received:", newStr.strip()
+            #print "Status Received:", newStr.strip()
 
             #
             # add what we have from what was left over from last time
@@ -268,16 +316,26 @@ class CatsOk:
         if event & select.POLLOUT:
             s = self.popStatus()
             if s != None:
+                #print "status request: ", s
                 self.t2.send( s + self.termstr)
 
         return True
 
     def __init__( self):
+        # See if we are on a path that requires air rights
+
+        #
+        # establish connecitons to database server
+        self.db = _Q()
+
         #
         # establish connections to CATS sockets
+        qr = self.db.query("select px.getcatsaddr() as a")
+        catsaddr = qr.dictresult()[0]["a"]
+
         self.t1 = socket.socket( socket.AF_INET, socket.SOCK_STREAM)
         try:
-            self.t1.connect( ("10.1.19.18", 1000))
+            self.t1.connect( ( catsaddr, 1000))
         except socket.error:
             raise CatsOkError( "Could not connect to command port")
         self.t1.setblocking( 1)
@@ -285,19 +343,11 @@ class CatsOk:
 
         self.t2 = socket.socket( socket.AF_INET, socket.SOCK_STREAM)
         try:
-            self.t2.connect( ("10.1.19.18", 10000))
+            self.t2.connect( ( catsaddr, 10000))
         except socket.error:
             raise CatsOkError( "Could not connect to status port")
         self.t2.setblocking( 1)
 
-        #
-        # establish connecitons to database server
-        #self.db = pg.connect(dbname='ls',user='lsuser', host='10.1.0.3')
-        self.db = _Q()
-        #self.db.query( "PREPARE io_noArgs AS select cats.setio()")
-        #self.db.query( "PREPARE position_noArgs AS select cats.setposition()")
-        #self.db.query( "PREPARE message_noArgs AS select cats.setmessage()")
-        #self.db.query( "PREPARE state_noArgs AS select cats.setstate()")
         #
         # Listen to db requests
         self.db.query( "select cats.init()")
@@ -328,21 +378,22 @@ class CatsOk:
         #
         # Set up sFan to handle status socket messages
         self.sFan = {
-            "state"    : self.statusStateParse,
-            "io"       : self.statusIoParse,
-            "di"       : self.statusDiParse,
-            "do"       : self.statusDoParse,
-            "position" : self.statusPositionParse,
+            "state("    : self.statusStateParse,
+            "io("       : self.statusIoParse,
+            "di("       : self.statusDiParse,
+            "do("       : self.statusDoParse,
+            "position(" : self.statusPositionParse,
             "config"   : self.statusConfigParse
             }
 
         self.srqst = {
-            "state"     : { "period" : 0.5, "last" : None, "rqstCnt" : 0, "rcvdCnt" : 0},
-            "io"        : { "period" : 0.5, "last" : None, "rqstCnt" : 0, "rcvdCnt" : 0},
-            "di"        : { "period" : 0.5, "last" : None, "rqstCnt" : 0, "rcvdCnt" : 0},
+            "state"     : { "period" : 0.55, "last" : None, "rqstCnt" : 0, "rcvdCnt" : 0},
+            # "io"        : { "period" : 0.5, "last" : None, "rqstCnt" : 0, "rcvdCnt" : 0},
             "do"        : { "period" : 0.5, "last" : None, "rqstCnt" : 0, "rcvdCnt" : 0},
-            "position"  : { "period" : 30, "last" : None, "rqstCnt" : 0, "rcvdCnt" : 0},
-            "message"   : { "period" : 30, "last" : None, "rqstCnt" : 0, "rcvdCnt" : 0}
+            "di"        : { "period" : 0.6, "last" : None, "rqstCnt" : 0, "rcvdCnt" : 0},
+            #"position"  : { "period" : 0.5, "last" : None, "rqstCnt" : 0, "rcvdCnt" : 0},
+            "config"     : { "period" : 86400, "last" : None, "rqstCnt" : 0, "rcvdCnt" : 0},
+            "message"   : { "period" : 0.65, "last" : None, "rqstCnt" : 0, "rcvdCnt" : 0}
             }
 
         # self.MD2 = Bang.Sphere( Bang.Point( 0.5, 0.5, 0.5), 0.5)
@@ -361,22 +412,26 @@ class CatsOk:
     def run( self):
         runFlag = True
         self.pushCmd( "vdi90off")
-
+        lastDbTime = datetime.datetime.now()
         while( runFlag):
             for ( fd, event) in self.p.poll( 100):
                 runFlag = runFlag and self.fan[fd](event)
                 if not runFlag:
                     break
+            n = datetime.datetime.now()
             if runFlag and not self.waiting:
                 #
                 # queue up new requests if it is time to
-                n = datetime.datetime.now()
                 for k in self.srqst.keys():
                     r = self.srqst[k]
                     if r["last"] == None or (n - r["last"] > datetime.timedelta(0,r["period"])):
                         runFlag &= self.maybePushStatus( k)
                         r["last"] = datetime.datetime.now()
                         r["rqstCnt"] += 1
+
+            if runFlag and (self.dbFlag or (n - lastDbTime > datetime.timedelta(0, 1))):
+                    lastDbTime = n
+                    runFlag &= self.dbService( select.POLLIN)
 
             if runFlag and self.needAirRights and not self.haveAirRights:
                 qs = "select px.requestRobotAirRights() as rslt"
@@ -385,70 +440,132 @@ class CatsOk:
                 if rslt == "t":
                     self.haveAirRights = True
                     self.pushCmd( "vdi90on")
+                    print "received haveAirRights and setting vdi90on"
 
             if runFlag and not self.needAirRights and self.haveAirRights:
                 self.db.query( "select px.dropRobotAirRights()")    # drop rights and send notify that sample is ready (if it is)
                 self.pushCmd( "vdi90off")
                 self.haveAirRights = False
+                print "dropped Air Rights and setting vdi90off"
 
         self.close()
 
     def statusStateParse( self, s):
         self.srqst["state"]["rcvdCnt"] = self.srqst["state"]["rcvdCnt"] + 1
-        if self.statusStateLast != None and self.statusStateLast == s:
-            #self.db.query( "execute state_noArgs")
-            #self.db.query( "select cats.setstate()")
-            return
 
         # One line command to an argument list
         a = s[s.find("(")+1 : s.find(")")].split(',')
 
         if len(a) != 15:
-            print s
+            #print s
             raise CatsOkError( 'Wrong number of arguments received in status state response: got %d, exptected 15' % (len(a)))
         #                            0            1            2             3           4          5   6   7   8   9  10   11         12           13           14
-        b = []
-        i = 0
-        #             0           1           2         3       4         5      6       7       8        9     10        11        12          13         14
-        aType = ["::boolean","::boolean","::boolean","::text","::text","::int","::int","::int","::int","::int","::int","::text","::boolean","::boolean","::boolean"]
-        qs = "select cats.setstate( "
+        if self.statusStateLast == None or self.statusStateLast != s:
+            b = []
+            i = 0
+            #             0           1           2         3       4         5      6       7       8        9     10        11        12          13         14
+            aType = ["::boolean","::boolean","::boolean","::text","::text","::int","::int","::int","::int","::int","::int","::text","::boolean","::boolean","::boolean"]
+            qs = "select cats.setstate( "
 
-        needComma = False
-        for zz in a:
-            if zz == None or len(zz) == 0:
-                b.append("NULL")
+            needComma = False
+            for zz in a:
+                if zz == None or len(zz) == 0:
+                    b.append("NULL")
+                else:
+                    b.append( "'%s'%s" % (zz, aType[i]))
+
+                if needComma:
+                    qs = qs+","
+                qs = qs + b[i]
+                i = i+1
+                needComma = True
+
+            qs = qs + ")"
+            self.db.query( qs)
+            self.statusStateLast = s
+
+
+        if self.sampleMounted["lid"] != a[7] or self.sampleMounted["sample"] != a[8]:
+            self.sampleMounted["lid"] = a[7]
+            self.sampleMounted["sample"] = a[8]
+            self.sampleMounted["timestamp"] = datetime.datetime.now()
+            self.checkMountedSample = True
+
+
+        if self.sampleTooled["lid"] != a[7] or self.sampleTooled["sample"] != a[8]:
+            self.sampleTooled["lid"] = a[7]
+            self.sampleTooled["sample"] = a[8]
+            self.sampleTooled["timestamp"] = datetime.datetime.now()
+
+
+
+        self.robotOn = a[0]      == "1"
+        self.robotInRemote= a[1] == "1"
+        self.robotError = a[2]   == "1"
+
+        # things to do when in remote mode
+        if self.robotInRemote:
+            if self.robotError or not self.diES:
+                self.pushCmd( "reset")
+            elif not self.robotOn:
+                self.pushCmd( "on")
+
+        # Nab air rights when we embark on a path requiring them
+        pathName = a[4]
+        self.workingPath = pathName
+        if self.lastPathName != pathName and not self.haveAirRights:
+            try:
+                ndx = self.pathsNeedingAirRights.index(pathName)
+            except ValueError:
+                self.needAirRights = False
+                if pathName != "":
+                    print "Current path '%s' does not need air rights" % (pathName)
+                else:
+                    print "No path running"
             else:
-                b.append( "'%s'%s" % (zz, aType[i]))
+                print "Need Air Rights for path '%s'" % (pathName)
+                self.needAirRights = True
+        self.lastPathName = pathName
 
-            if needComma:
-                qs = qs+","
-            qs = qs + b[i]
-            i = i+1
-            needComma = True
-
-        qs = qs + ")"
-        #qs = "select cats.setstate( '%s'::boolean, '%s'::boolean, '%s'::boolean, '%s'::text, '%s'::text, '%s', '%s', '%s', '%s', '%s', '%s', '%s'::text, '%s'::boolean, '%s'::boolean, '%s'::boolean)" % \
-        #( a[0], a[1], a[2], a[3], a[4], a[5], a[6], a[7], a[8], a[9], a[10], a[11], a[12], a[13], a[14])
-        self.db.query( qs)
-        self.statusStateLast = s
-
-        # See if we are on a path that requires air rights
-        pathName = a[4];
-        try:
-            ndx = self.pathsNeedingAirRights.index(pathName)
-        except ValueError:
-            self.needAirRights = False
-        else:
-            self.needAirRights = True
+        if self.checkMountedSample and pathName != 'get' and (datetime.datetime.now() - self.sampleMounted["timestamp"] > datetime.timedelta(0,3)):
+            self.checkMountedSample = False
+            qr = self.db.query( "select px.getmagnetstate() as ms")
+            ms = qr.dictresult()[0]["ms"]
+            print "Sample Mounted: ", ms
+            print self.sampleMounted
+            if ms == "t" and (self.sampleMounted["lid"] == "" or self.sampleMounted["sample"] == ""):
+                print "Sample on diffractometer but robot thinks there isn't: aborting"
+                self.pushCmd( "abort")
+                self.needAirRights = False
 
     def statusDoParse( self, s):
         self.srqst["do"]["rcvdCnt"] = self.srqst["do"]["rcvdCnt"] + 1
-        print "do:", s
+        #print "do:", s
+        do = s[s.find("(")+1:s.find(")")]
+        if do[0] != "1" and do[0] != "0":
+            print "Bad 'do' returned: %s" % (do)
+            return
+        else:
+            qs = "select cats.setdo( b'%s')" % (do)
+            self.db.query( qs)
+
+        # give up air rights on falling edge of Pr2
+        lastPr2 = self.Pr2
+        self.Pr2 = do[5] == "1"
+        if lastPr2 and not self.Pr2:
+            self.needAirRights = False
+
 
     def statusDiParse( self, s):
         self.srqst["di"]["rcvdCnt"] = self.srqst["di"]["rcvdCnt"] + 1
-        print "di: ", s
+        #print "di: ", s
+        di = s[s.find("(")+1:s.find(")")]
 
+        qs = "select cats.setdi( b'%s')" % (di)
+        self.db.query( qs)
+
+        self.diES  = di[1] == "1"
+        #print "diES: ", self.diES
 
     def statusIoParse( self, s):
         self.srqst["io"]["rcvdCnt"] = self.srqst["io"]["rcvdCnt"] + 1
@@ -465,7 +582,7 @@ class CatsOk:
         c = b.replace( "0", "'f'")
 
         qs = "select cats.setio( %s)" % (c)
-        print s,qs
+        #print s,qs
         self.db.query( qs)
         self.statusIoLast = s
         
