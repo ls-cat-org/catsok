@@ -891,6 +891,15 @@ INSERT INTO cats._cylinder2tool (ctcyl, ctoff, ctnsamps, cttoolno, cttoolname) V
 INSERT INTO cats._cylinder2tool (ctcyl, ctoff, ctnsamps, cttoolno, cttoolname) VALUES ( 11, 10, 16, 5, 'UNI');
 INSERT INTO cats._cylinder2tool (ctcyl, ctoff, ctnsamps, cttoolno, cttoolname) VALUES ( 12, 10, 16, 5, 'UNI');
 
+CREATE TABLE cats._toolCorrection (
+       tckey serial primary key,
+       tcstn bigint references px.stations (stnkey),
+       tcts  timestamp with time zone default now(),
+       tcX int not null default 0,
+       tcY int not null default 0,
+       tcZ int not null default 0
+);
+
 
 CREATE OR REPLACE FUNCTION cats._mkcryocmd( theCmd text, theId int, theNewId int, xx int, yy int, zz int) RETURNS INT AS $$
   --
@@ -1022,8 +1031,9 @@ CREATE OR REPLACE FUNCTION cats.getput( theId int, xx int, yy int, zz int) retur
     tool1 int;
     tool2 int;
   BEGIN
-    tool1 := px.getCurrentSampleID() & x'00ff0000'::int;
-    tool2 := theId                   & x'00ff0000'::int;
+    SELECT cttoolno INTO tool1 FROM cats._cylinder2tool WHERE ctcyl = (px.getCurrentSampleID() & x'0000ff00'::int) >> 8;
+    SELECT cttoolno INTO tool2 FROM cats._cylinder2tool WHERE ctcyl = (theId                   & x'0000ff00'::int) >> 8;
+
     IF tool1 != tool2 THEN
       PERFORM cats.get( xx, yy, zz);
       SELECT cats.put( theId, xx, yy, zz) INTO rtn;
@@ -1202,4 +1212,13 @@ CREATE OR REPLACE FUNCTION cats.restart() returns void AS $$
   SELECT cats._pushqueue( 'restart');
 $$ LANGUAGE SQL SECURITY DEFINER;
 ALTER FUNCTION cats.restart() OWNER TO lsadmin;
+
+
+CREATE TABLE cats.magnetstates (
+       msKey serial primary key,
+       msTS timestamp with time zone default now(),
+       msStn bigint references px.stations (stnkey),
+       msSamplePresent boolean not null
+);
+ALTER TABLE cats.magnetstates OWNER to lsadmin;
 
