@@ -391,7 +391,8 @@ class CatsOk:
             # "io"        : { "period" : 0.5, "last" : None, "rqstCnt" : 0, "rcvdCnt" : 0},
             "do"        : { "period" : 0.5, "last" : None, "rqstCnt" : 0, "rcvdCnt" : 0},
             "di"        : { "period" : 0.6, "last" : None, "rqstCnt" : 0, "rcvdCnt" : 0},
-            # "position"  : { "period" : 0.5, "last" : None, "rqstCnt" : 0, "rcvdCnt" : 0},
+            #"position"  : { "period" : 0.5, "last" : None, "rqstCnt" : 0, "rcvdCnt" : 0},
+            "config"     : { "period" : 86400, "last" : None, "rqstCnt" : 0, "rcvdCnt" : 0},
             "message"   : { "period" : 0.65, "last" : None, "rqstCnt" : 0, "rcvdCnt" : 0}
             }
 
