@@ -895,6 +895,7 @@ CREATE TABLE cats._toolCorrection (
        tckey serial primary key,
        tcstn bigint references px.stations (stnkey),
        tcts  timestamp with time zone default now(),
+       tcTool int not null default 0,
        tcX int not null default 0,
        tcY int not null default 0,
        tcZ int not null default 0
@@ -929,6 +930,8 @@ CREATE OR REPLACE FUNCTION cats._mkcryocmd( theCmd text, theId int, theNewId int
     rtool2 int;	-- robot's tool number
     rsmpl2 int;	-- robot's sample number
 
+    tc record;  -- tool correction: a kludge to finetune the diffractometer position
+
   BEGIN
     rtn := 0;
 
@@ -938,8 +941,6 @@ CREATE OR REPLACE FUNCTION cats._mkcryocmd( theCmd text, theId int, theNewId int
     END IF;    
 
     INSERT INTO cats._args (aCmd) VALUES ( theCmd);
-
-    UPDATE cats._args SET aXShift = xx, aYShift = yy, aZShift = zz WHERE aKey=currval('cats._args_akey_seq');
 
     --
     -- theId is zero for an "get".  Here we need to get the tool number from the current state
@@ -1002,6 +1003,14 @@ CREATE OR REPLACE FUNCTION cats._mkcryocmd( theCmd text, theId int, theNewId int
       END IF;
       -- Now we know what we want
       UPDATE cats._args SET aNewLid=rlid2, aNewSample=rsmpl2 WHERE akey=currval('cats._args_akey_seq');
+    END IF;
+
+
+    SELECT * INTO tc FROM cats._toolCorrection WHERE tcstn=px.getStation() and tcTool = rtool1 ORDER BY tcKey DESC LIMIT 1;
+    IF FOUND THEN
+      UPDATE cats._args SET aXShift = xx + tc.tcx, aYShift = yy + tc.tcy, aZShift = zz + tc.tcz WHERE aKey=currval('cats._args_akey_seq');
+    ELSE
+      UPDATE cats._args SET aXShift = xx, aYShift = yy, aZShift = zz WHERE aKey=currval('cats._args_akey_seq');
     END IF;
 
     PERFORM cats._pushqueue( cats._gencmd( currval( 'cats._args_akey_seq')));
@@ -1222,3 +1231,37 @@ CREATE TABLE cats.magnetstates (
 );
 ALTER TABLE cats.magnetstates OWNER to lsadmin;
 
+CREATE OR REPLACE FUNCTION cats.recover_SPINE_dismount_failure() returns boolean AS $$
+  DECLARE
+    rtn boolean;
+    ta  record;		-- transfer arguments
+  BEGIN
+    rtn := True;
+    PERFORM cats.abort();
+    PERFORM cats.reset();
+    PERFORM cats.back(0);
+    SELECT * INTO ta FROM px.transferArgs WHERE taStn=px.getstation() ORDER BY taKey DESC LIMIT 1;
+    PERFORM px.startTransfer( ta.cursam, False, ta.taxx, ta.tayy, ta.tazz);
+    PERFORM px.startTransfer( ta.taId, False, ta.taxx, ta.tayy, ta.tazz);
+
+    return rtn;
+  END;
+$$ LANGUAGE PLPGSQL SECURITY DEFINER;
+ALTER FUNCTION cats.recover_SPINE_dismount_failure() OWNER TO lsadmin;
+
+CREATE OR REPLACE FUNCTION cats.recover_dismount_failure() returns boolean AS $$
+  DECLARE
+   rtn boolean;
+   tn int;   -- current tool number
+  BEGIN
+    rtn := FALSE;
+    SELECT cttoolno INTO tn FROM cats._cylinder2tool LEFT JOIN cats.states ON csToolNumber=cttoolname OR csToolNumber=cttoolname WHERE csStn=px.getstation() ORDER BY cskey DESC LIMIT 1;
+    IF FOUND THEN
+      IF tn = 2 THEN -- The SPINE/EMBL tool
+        SELECT cats.recover_SPINE_dismount_failure() INTO rtn;
+      END IF;
+    END IF;
+    return rtn;
+  END;
+$$ LANGUAGE PLPGSQL SECURITY DEFINER;
+ALTER FUNCTION cats.recover_dismount_failure() OWNER TO lsadmin;

@@ -82,6 +82,7 @@ class CatsOk:
     """
     Monitors status of the cats robot, updates database, and controls CatsOk lock
     """
+    inRecoveryMode = False
     workingPath = ""    # path we are currently running
     afterCmd    = []
     pathsNeedingAirRights = [
@@ -536,7 +537,12 @@ class CatsOk:
             if ms == "t" and (self.sampleMounted["lid"] == "" or self.sampleMounted["sample"] == ""):
                 print "Sample on diffractometer but robot thinks there isn't: aborting"
                 self.pushCmd( "abort")
-                self.needAirRights = False
+                if not self.inRecoverMode:
+                    self.inRecoveryMode = True
+                    self.db.query( "select cats.recover_dismount_failure()")
+                else:
+                    self.needAirRights = False
+                    self.inRecoveryMode = False
 
     def statusDoParse( self, s):
         self.srqst["do"]["rcvdCnt"] = self.srqst["do"]["rcvdCnt"] + 1
