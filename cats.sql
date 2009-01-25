@@ -137,6 +137,23 @@ $$ LANGUAGE plpgsql SECURITY DEFINER;
 ALTER FUNCTION cats.setState() OWNER TO lsadmin;
 
 
+CREATE OR REPLACE FUNCTION cats.setStateInsertTF() returns trigger as $$
+  DECLARE
+    oldState record;
+  BEGIN
+    SELECT * INTO oldState FROM cats.states WHERE csstn=px.getStation() and cskey != NEW.cskey ORDER BY cskey DESC LIMIT 1;
+    --    raise notice 'new lid: %  new sample: %  old lid: %  old sample: %', new.cslidnumbermounted, new.cssamplenumbermounted, oldstate.cslidnumbermounted, oldstate.cssamplenumbermounted;
+    IF FOUND and (coalesce(NEW.csLidNumberMounted,0) != coalesce(oldstate.csLidNumberMounted,0) or coalesce(NEW.csSampleNumberMounted,0) != coalesce(oldstate.csSampleNumberMounted,0)) THEN
+      PERFORM px.endTransfer();
+    END IF;
+    RETURN NEW;
+  END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+ALTER FUNCTION cats.setStateInsertTF() OWNER TO lsadmin;
+
+CREATE TRIGGER setStateInsertTigger AFTER INSERT ON cats.states FOR EACH ROW EXECUTE PROCEDURE cats.setStateInsertTF();
+
+
 CREATE OR REPLACE FUNCTION px.setMountedSample( tool text, lid int, sampleno int) RETURNS int AS $$
   DECLARE
     cstn int;
@@ -900,6 +917,7 @@ CREATE TABLE cats._toolCorrection (
        tcY int not null default 0,
        tcZ int not null default 0
 );
+ALTER TABLE cats._toolCorrection OWNER TO lsadmin;
 
 
 CREATE OR REPLACE FUNCTION cats._mkcryocmd( theCmd text, theId int, theNewId int, xx int, yy int, zz int) RETURNS INT AS $$
@@ -1239,6 +1257,7 @@ CREATE OR REPLACE FUNCTION cats.recover_SPINE_dismount_failure() returns boolean
     rtn := True;
     PERFORM cats.abort();
     PERFORM cats.reset();
+    PERFORM cats.safe(0);
     PERFORM cats.back(0);
     SELECT * INTO ta FROM px.transferArgs WHERE taStn=px.getstation() ORDER BY taKey DESC LIMIT 1;
     PERFORM px.startTransfer( ta.cursam, False, ta.taxx, ta.tayy, ta.tazz);
