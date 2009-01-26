@@ -2,8 +2,7 @@
 #
 
 
-import sys, os, select, pg, time, traceback, datetime, socket, EpicsCA
-#import Bang
+import sys, os, select, pg, time, traceback, datetime, socket
 
 
 
@@ -103,8 +102,6 @@ class CatsOk:
     robotError = None
     diES       = None
 
-    CATSOkRelayPVName = '21:F1:pmac10:acc65e:1:bo0'
-    CATSOkRelayPV     = None            # the epics pv of our relay
     termstr = "\r"      # character expected to terminate cats response
     db = None           # database connection
 
@@ -353,14 +350,6 @@ class CatsOk:
         # Listen to db requests
         self.db.query( "select cats.init()")
 
-
-        #
-        # Get the epics relay pv
-        self.CATSOkRelayPV = EpicsCA.PV( self.CATSOkRelayPVName)
-        # initially set this high
-        self.CATSOkRelayPV.put( 1)
-
-
         #
         # Set up poll object
         self.p = select.poll()
@@ -380,7 +369,7 @@ class CatsOk:
         # Set up sFan to handle status socket messages
         self.sFan = {
             "state("    : self.statusStateParse,
-            "io("       : self.statusIoParse,
+            #"io("       : self.statusIoParse,
             "di("       : self.statusDiParse,
             "do("       : self.statusDoParse,
             "position(" : self.statusPositionParse,
@@ -389,15 +378,12 @@ class CatsOk:
 
         self.srqst = {
             "state"     : { "period" : 0.55, "last" : None, "rqstCnt" : 0, "rcvdCnt" : 0},
-            # "io"        : { "period" : 0.5, "last" : None, "rqstCnt" : 0, "rcvdCnt" : 0},
             "do"        : { "period" : 0.5, "last" : None, "rqstCnt" : 0, "rcvdCnt" : 0},
             "di"        : { "period" : 0.6, "last" : None, "rqstCnt" : 0, "rcvdCnt" : 0},
             #"position"  : { "period" : 0.5, "last" : None, "rqstCnt" : 0, "rcvdCnt" : 0},
             "config"     : { "period" : 86400, "last" : None, "rqstCnt" : 0, "rcvdCnt" : 0},
             "message"   : { "period" : 0.65, "last" : None, "rqstCnt" : 0, "rcvdCnt" : 0}
             }
-
-        # self.MD2 = Bang.Sphere( Bang.Point( 0.5, 0.5, 0.5), 0.5)
 
     def close( self):
         if self.t1 != None:
@@ -528,12 +514,18 @@ class CatsOk:
                 self.needAirRights = True
         self.lastPathName = pathName
 
+        #
+        # Check if the magnet state makes sense
+        #
         if self.checkMountedSample and pathName != 'get' and (datetime.datetime.now() - self.sampleMounted["timestamp"] > datetime.timedelta(0,3)):
             self.checkMountedSample = False
             qr = self.db.query( "select px.getmagnetstate() as ms")
             ms = qr.dictresult()[0]["ms"]
             print "Sample Mounted: ", ms
             print self.sampleMounted
+            #
+            # check if the robot and the MD2 agree
+            #
             if ms == "t" and (self.sampleMounted["lid"] == "" or self.sampleMounted["sample"] == ""):
                 print "Sample on diffractometer but robot thinks there isn't: aborting"
                 self.pushCmd( "abort")
@@ -564,34 +556,12 @@ class CatsOk:
 
     def statusDiParse( self, s):
         self.srqst["di"]["rcvdCnt"] = self.srqst["di"]["rcvdCnt"] + 1
-        #print "di: ", s
         di = s[s.find("(")+1:s.find(")")]
 
         qs = "select cats.setdi( b'%s')" % (di)
         self.db.query( qs)
 
         self.diES  = di[1] == "1"
-        #print "diES: ", self.diES
-
-    def statusIoParse( self, s):
-        self.srqst["io"]["rcvdCnt"] = self.srqst["io"]["rcvdCnt"] + 1
-        if self.statusIoLast != None and self.statusIoLast == s:
-            #self.db.query( "select cats.setio()")
-            #self.db.query( "execute io_noArgs")
-            return
-
-        # One line command to pull out the arguments as one string
-        # hope this is in the right format to send to postresql server
-
-        a = s[s.find("(")+1:s.find(")")]
-        b = a.replace( "1", "'t'")
-        c = b.replace( "0", "'f'")
-
-        qs = "select cats.setio( %s)" % (c)
-        #print s,qs
-        self.db.query( qs)
-        self.statusIoLast = s
-        
 
     def statusPositionParse( self, s):
         self.srqst["position"]["rcvdCnt"] = self.srqst["position"]["rcvdCnt"] + 1
@@ -610,7 +580,6 @@ class CatsOk:
         self.db.query( qs)
         self.statusPositionLast = s
 
-        # self.RCap( Bang.Point( float(a[0]), float(a[1]), float(a[2]), Bang.Point( float
 
     def statusConfigParse( self, s):
         pass
