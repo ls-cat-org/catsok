@@ -398,6 +398,7 @@ class CatsOk:
 
     def run( self):
         runFlag = True
+        print "starting run"
         self.pushCmd( "vdi90off")
         lastDbTime = datetime.datetime.now()
         while( runFlag):
@@ -406,6 +407,7 @@ class CatsOk:
                 if not runFlag:
                     break
             n = datetime.datetime.now()
+            #print "now: ",n
             if runFlag and not self.waiting:
                 #
                 # queue up new requests if it is time to
@@ -444,7 +446,7 @@ class CatsOk:
         a = s[s.find("(")+1 : s.find(")")].split(',')
 
         if len(a) != 15:
-            #print s
+            print s
             raise CatsOkError( 'Wrong number of arguments received in status state response: got %d, exptected 15' % (len(a)))
         #                            0            1            2             3           4          5   6   7   8   9  10   11         12           13           14
         if self.statusStateLast == None or self.statusStateLast != s:
@@ -529,9 +531,9 @@ class CatsOk:
             if ms == "t" and (self.sampleMounted["lid"] == "" or self.sampleMounted["sample"] == ""):
                 print "Sample on diffractometer but robot thinks there isn't: aborting"
                 self.pushCmd( "abort")
-                if not self.inRecoverMode:
+                if not self.inRecoveryMode:
                     self.inRecoveryMode = True
-                    self.db.query( "select cats.recover_dismount_failure()")
+                    # self.db.query( "select cats.recover_dismount_failure()")
                 else:
                     self.needAirRights = False
                     self.inRecoveryMode = False
@@ -606,6 +608,7 @@ if __name__ == '__main__':
 
     while rFlag:
         while iFlag:
+            print "Starting Up..."
             try:
                 z = CatsOk()
             except CatsOkError, e:
