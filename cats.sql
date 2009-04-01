@@ -262,17 +262,268 @@ ALTER TABLE cats.di OWNER TO lsadmin;
 CREATE OR REPLACE FUNCTION cats.diInsertTF() returns trigger AS $$
   DECLARE
     prev record;
+    msgs record;
   BEGIN
     SELECT * INTO prev FROM cats.di WHERE distn=px.getStation() ORDER BY diKey DESC LIMIT 1;
-    IF FOUND AND prev.dii=NEW.dii THEN
-      UPDATE cats.di SET diTSLast=now() WHERE diKey=prev.diKey;
-      RETURN NULL;
+    --
+    
+    IF FOUND THEN
+      --
+      -- is there a non trivial change?
+      --
+      IF  ~(b'1'::bit(99)>>31) & prev.dii = ~(b'1'::bit(99)>>31) &  NEW.dii THEN
+        --
+        -- No: just update the time stamp
+        --
+        UPDATE cats.di SET diTSLast=now() WHERE diKey=prev.diKey;
+        RETURN NULL;
+      END IF;
+
+      --
+      -- A non trivial change was found.  Perhaps send out some messages
+      --
+      FOR msgs IN SELECT * FROM cats.di2error WHERE (prev.dii # NEW.dii) & d2ei != b'0'::bit(99) LOOP
+        IF (msgs.d2ei & NEW.dii) != b'0'::bit(99) THEN
+        --
+        -- The new value is high
+        --
+          PERFORM px.pushError( msgs.d2eeup, '');
+        ELSE
+        --
+        -- and low here
+        --
+          PERFORM px.pushError( msgs.d2eedown, '');
+        END IF;
+      END LOOP;
     END IF;
+
     return NEW;
   END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 ALTER FUNCTION cats.diInsertTF() OWNER TO lsadmin;
 CREATE TRIGGER diInsertTrigger BEFORE INSERT ON cats.di FOR EACH ROW EXECUTE PROCEDURE cats.diInsertTF();
+
+CREATE OR REPLACE FUNCTION cats.chkdi( odi bit(99), ndi bit(99), bt int) returns boolean AS $$
+--
+-- Compares an old di entry (odi) with a new di entry (ndi) and looks at a bit (bt)
+-- returns
+--   NULL if no change
+--   FALSE if change was from 1 to 0
+--   TRUE  if change was from 0 to 1
+--
+  DECLARE
+    o boolean;
+    n boolean;
+  BEGIN
+    o := ((B'1'::bit(99) >> bt)  & odi) != b'0'::bit(99);
+    n := ((B'1'::bit(99) >> bt)  & ndi) != b'0'::bit(99);
+    IF o = n THEN
+      return NULL;
+    ELSEIF n THEN
+      return TRUE;
+    END IF;
+    return FALSE;
+  END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+ALTER FUNCTION cats.chkdi( bit(99), bit(99), int) OWNER TO lsadmin;
+
+
+
+CREATE TYPE cats.getrobotstatetype AS ( power boolean, lid1 boolean, lid2 boolean, lid3 boolean, regon boolean, magon boolean, toolopen boolean, path text);
+CREATE OR REPLACE FUNCTION cats.getrobotstate() returns cats.getrobotstatetype AS $$
+  DECLARE
+    rtn cats.getrobotstatetype;
+    sti bit(99);
+    sto bit(55);
+  BEGIN
+    SELECT dii INTO sti FROM cats.di WHERE distn = px.getstation() ORDER BY dikey desc LIMIT 1;
+    IF FOUND THEN
+      rtn.lid1     := (b'1'::bit(99) >> 21) & sti != 0::bit(99);
+      rtn.lid2     := (b'1'::bit(99) >> 22) & sti != 0::bit(99);
+      rtn.lid3     := (b'1'::bit(99) >> 23) & sti != 0::bit(99);
+      rtn.toolopen := (b'1'::bit(99) >> 24) & sti != 0::bit(99);
+    END IF;
+    SELECT doo INTO sto FROM cats.do WHERE dostn = px.getstation() ORDER BY dokey desc LIMIT 1;
+    IF FOUND THEN
+      rtn.magon := (b'1'::bit(55) >> 4) & sto != 0::bit(55);
+    END IF;
+    SELECT cspower, csln2reg, cspathname INTO rtn.power, rtn.regon, rtn.path FROM cats.states WHERE csstn=px.getstation() ORDER BY cskey desc limit 1;
+    return rtn;
+  END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+ALTER FUNCTION cats.getrobotstate() OWNER TO lsadmin;
+
+
+CREATE TABLE cats.o2error (
+--
+-- Maps a changing bit in Di with an error message in px.errors
+--
+       o2ekey serial primary key,	-- our key
+       o2eo bit(99) unique,			-- a mask with one bit set
+       o2eeup int references px.errors (eid) default null,	-- message when bit goes high
+       o2eedown int references px.errors (eid) default null	-- message when bit goes low
+);
+ALTER TABLE cats.o2error OWNER TO lsadmin;
+
+
+
+CREATE TABLE cats.di2error (
+--
+-- Maps a changing bit in Di with an error message in px.errors
+--
+       d2ekey serial primary key,	-- our key
+       d2ei bit(99) unique,			-- a mask with one bit set
+       d2eeup int references px.errors (eid) default null,	-- message when bit goes high
+       d2eedown int references px.errors (eid) default null	-- message when bit goes low
+);
+ALTER TABLE cats.di2error OWNER TO lsadmin;
+
+
+INSERT INTO px.errors (eSeverity, eid, eTerse, eVerbose) VALUES ('message', 29100, 'Cryogenic Sensor Failure', 'A cryogenic sensor has failed: the Dewar may starting warming or LN2 may start overflowing in the hutch');
+INSERT INTO px.errors (eSeverity, eid, eTerse, eVerbose) VALUES ('message', 30100, 'Cryogenic Sensors OK',     'The cryogenic sensors are now OK');
+
+INSERT INTO cats.di2error (d2ei, d2eeup, d2eedown) VALUES ( b'1'::bit(99) >> 0, 30100, 29100);
+
+INSERT INTO px.errors (eSeverity, eid, eTerse, eVerbose) VALUES ('message', 29101, 'Emergency Stop Pressed or Air Pressure Loss', 'At least on of the emergency stop buttons has been pressed or air pressure has been lost.  Trun an estop button CCW to release');
+INSERT INTO px.errors (eSeverity, eid, eTerse, eVerbose) VALUES ('message', 30101, 'Emergency Stop Buttons and Air Pressure OK', 'Emergency stop and air pressures systems OK');
+
+INSERT INTO px.errors (eSeverity, eid, eTerse, eVerbose) VALUES ('message', 29102, 'Collision Detected', 'The robot arm has detected a collision.  This is not good.  If the arm is in the Dewar then call the LS-CAT staff even if it is late at night or early in the morning');
+INSERT INTO px.errors (eSeverity, eid, eTerse, eVerbose) VALUES ('message', 30102, 'Collision Cleared',  'The collision has been cleared.  Time to recover.');
+
+INSERT INTO px.errors (eSeverity, eid, eTerse, eVerbose) VALUES ('warning', 29103, 'LN2 High Level Alarm',     'The dewar is now over full.  Contact LS-CAT staff.  Watch for Low O2 warning in hutch.');
+INSERT INTO px.errors (eSeverity, eid, eTerse, eVerbose) VALUES ('message', 30103, 'LN2 High Level Alarm Off', 'The LN2 level is now below the overfill mark');
+INSERT INTO px.errors (eSeverity, eid, eTerse, eVerbose) VALUES ('message', 39104, 'LN2 Level High',       'The dewar is now full.  Hopefully the LN2 refill will stop');
+INSERT INTO px.errors (eSeverity, eid, eTerse, eVerbose) VALUES ('message', 30104, 'LN2 High Level OK',    'The LN2 level is now below the high mark');
+INSERT INTO px.errors (eSeverity, eid, eTerse, eVerbose) VALUES ('message', 39105, 'LN2 Level Low',         'The dewar LN2 level is now low.  Hopefully the LN2 refill will start');
+INSERT INTO px.errors (eSeverity, eid, eTerse, eVerbose) VALUES ('message', 30105, 'LN2 Low Level OK',      'The LN2 level is now above the low mark');
+INSERT INTO px.errors (eSeverity, eid, eTerse, eVerbose) VALUES ('warning', 29106, 'LN2 Low Level Alarm',  'The dewar LN2 level is too low.  Remove your pucks and call the LS-CAT staff');
+INSERT INTO px.errors (eSeverity, eid, eTerse, eVerbose) VALUES ('message', 30106, 'LN2 Low Level OK',    ' The LN2 level is now above the low mark');
+INSERT INTO px.errors (eSeverity, eid, eTerse, eVerbose) VALUES ('message', 39107, 'Gas in fill line',       'Gas is detected in the fill line.  This is usually not a bad thing');
+INSERT INTO px.errors (eSeverity, eid, eTerse, eVerbose) VALUES ('message', 30107, 'Liquid in fill line',    'Liquid has been detected in the fill line.  This is good if the Dewar is being filled');
+
+INSERT INTO cats.di2error (d2ei, d2eeup, d2eedown) VALUES ( b'1'::bit(99) >> 1, 30101, 29101);
+INSERT INTO cats.di2error (d2ei, d2eeup, d2eedown) VALUES ( b'1'::bit(99) >> 2, 30102, 29102);
+INSERT INTO cats.di2error (d2ei, d2eeup, d2eedown) VALUES ( b'1'::bit(99) >> 3, 30103, 29103);
+INSERT INTO cats.di2error (d2ei, d2eeup, d2eedown) VALUES ( b'1'::bit(99) >> 4, 30104, 39104);
+INSERT INTO cats.di2error (d2ei, d2eeup, d2eedown) VALUES ( b'1'::bit(99) >> 5, 30105, 39105);
+INSERT INTO cats.di2error (d2ei, d2eeup, d2eedown) VALUES ( b'1'::bit(99) >> 6, 30106, 29106);
+INSERT INTO cats.di2error (d2ei, d2eeup, d2eedown) VALUES ( b'1'::bit(99) >> 7, 30107, 39107);
+
+
+INSERT INTO px.errors (eSeverity, eid, eTerse, eVerbose) VALUES ('message', 39112, 'Puck 1 in Lid 1 Removed',   'Puck 1 in Lid 1 is no longer detected: the robot will not move to this position anymore.');
+INSERT INTO px.errors (eSeverity, eid, eTerse, eVerbose) VALUES ('message', 30112, 'Puck 1 in Lid 1 in Place',  'Puck 1 in Lid 1 has been detected: the robot will be able to move to this position again.');
+INSERT INTO px.errors (eSeverity, eid, eTerse, eVerbose) VALUES ('message', 39113, 'Puck 2 in Lid 1 Removed',   'Puck 2 in Lid 1 is no longer detected: the robot will not move to this position anymore.');
+INSERT INTO px.errors (eSeverity, eid, eTerse, eVerbose) VALUES ('message', 30113, 'Puck 2 in Lid 1 in Place',  'Puck 2 in Lid 1 has been detected: the robot will be able to move to this position again.');
+INSERT INTO px.errors (eSeverity, eid, eTerse, eVerbose) VALUES ('message', 39114, 'Puck 3 in Lid 1 Removed',   'Puck 3 in Lid 1 is no longer detected: the robot will not move to this position anymore.');
+INSERT INTO px.errors (eSeverity, eid, eTerse, eVerbose) VALUES ('message', 30114, 'Puck 3 in Lid 1 in Place',  'Puck 3 in Lid 1 has been detected: the robot will be able to move to this position again.');
+INSERT INTO px.errors (eSeverity, eid, eTerse, eVerbose) VALUES ('message', 39115, 'Puck 1 in Lid 2 Removed',   'Puck 1 in Lid 2 is no longer detected: the robot will not move to this position anymore.');
+INSERT INTO px.errors (eSeverity, eid, eTerse, eVerbose) VALUES ('message', 30115, 'Puck 1 in Lid 2 in Place',  'Puck 1 in Lid 2 has been detected: the robot will be able to move to this position again.');
+INSERT INTO px.errors (eSeverity, eid, eTerse, eVerbose) VALUES ('message', 39116, 'Puck 2 in Lid 2 Removed',   'Puck 2 in Lid 2 is no longer detected: the robot will not move to this position anymore.');
+INSERT INTO px.errors (eSeverity, eid, eTerse, eVerbose) VALUES ('message', 30116, 'Puck 2 in Lid 2 in Place',  'Puck 2 in Lid 2 has been detected: the robot will be able to move to this position again.');
+INSERT INTO px.errors (eSeverity, eid, eTerse, eVerbose) VALUES ('message', 39117, 'Puck 3 in Lid 2 Removed',   'Puck 3 in Lid 2 is no longer detected: the robot will not move to this position anymore.');
+INSERT INTO px.errors (eSeverity, eid, eTerse, eVerbose) VALUES ('message', 30117, 'Puck 3 in Lid 2 in Place',  'Puck 3 in Lid 2 has been detected: the robot will be able to move to this position again.');
+INSERT INTO px.errors (eSeverity, eid, eTerse, eVerbose) VALUES ('message', 39118, 'Puck 1 in Lid 3 Removed',   'Puck 1 in Lid 3 is no longer detected: the robot will not move to this position anymore.');
+INSERT INTO px.errors (eSeverity, eid, eTerse, eVerbose) VALUES ('message', 30118, 'Puck 1 in Lid 3 in Place',  'Puck 1 in Lid 3 has been detected: the robot will be able to move to this position again.');
+INSERT INTO px.errors (eSeverity, eid, eTerse, eVerbose) VALUES ('message', 39119, 'Puck 2 in Lid 3 Removed',   'Puck 2 in Lid 3 is no longer detected: the robot will not move to this position anymore.');
+INSERT INTO px.errors (eSeverity, eid, eTerse, eVerbose) VALUES ('message', 30119, 'Puck 2 in Lid 3 in Place',  'Puck 2 in Lid 3 has been detected: the robot will be able to move to this position again.');
+INSERT INTO px.errors (eSeverity, eid, eTerse, eVerbose) VALUES ('message', 39120, 'Puck 3 in Lid 3 Removed',   'Puck 3 in Lid 3 is no longer detected: the robot will not move to this position anymore.');
+INSERT INTO px.errors (eSeverity, eid, eTerse, eVerbose) VALUES ('message', 30120, 'Puck 3 in Lid 3 in Place',  'Puck 3 in Lid 3 has been detected: the robot will be able to move to this position again.');
+
+INSERT INTO cats.di2error (d2ei, d2eeup, d2eedown) VALUES ( b'1'::bit(99) >> 12, 30112, 39112);
+INSERT INTO cats.di2error (d2ei, d2eeup, d2eedown) VALUES ( b'1'::bit(99) >> 13, 30113, 39113);
+INSERT INTO cats.di2error (d2ei, d2eeup, d2eedown) VALUES ( b'1'::bit(99) >> 14, 30114, 39114);
+INSERT INTO cats.di2error (d2ei, d2eeup, d2eedown) VALUES ( b'1'::bit(99) >> 15, 30115, 39115);
+INSERT INTO cats.di2error (d2ei, d2eeup, d2eedown) VALUES ( b'1'::bit(99) >> 16, 30116, 39116);
+INSERT INTO cats.di2error (d2ei, d2eeup, d2eedown) VALUES ( b'1'::bit(99) >> 17, 30117, 39117);
+INSERT INTO cats.di2error (d2ei, d2eeup, d2eedown) VALUES ( b'1'::bit(99) >> 18, 30118, 39118);
+INSERT INTO cats.di2error (d2ei, d2eeup, d2eedown) VALUES ( b'1'::bit(99) >> 19, 30119, 39119);
+INSERT INTO cats.di2error (d2ei, d2eeup, d2eedown) VALUES ( b'1'::bit(99) >> 20, 30120, 39120);
+
+
+INSERT INTO px.errors (eSeverity, eid, eTerse, eVerbose) VALUES ('message', 39121, 'Lid 1 Not Open',   'Lid 1 is not completely open (and is probably completely closed');
+INSERT INTO px.errors (eSeverity, eid, eTerse, eVerbose) VALUES ('message', 30121, 'Lid 1 Open',       'Lid 1 is completely closed');
+INSERT INTO px.errors (eSeverity, eid, eTerse, eVerbose) VALUES ('message', 39122, 'Lid 2 Not Open',   'Lid 2 is not completely open (and is probably completely closed');
+INSERT INTO px.errors (eSeverity, eid, eTerse, eVerbose) VALUES ('message', 30122, 'Lid 2 Open',       'Lid 2 is completely closed');
+INSERT INTO px.errors (eSeverity, eid, eTerse, eVerbose) VALUES ('message', 39123, 'Lid 3 Not Open',   'Lid 3 is not completely open (and is probably completely closed');
+INSERT INTO px.errors (eSeverity, eid, eTerse, eVerbose) VALUES ('message', 30123, 'Lid 3 Open',       'Lid 3 is completely closed');
+INSERT INTO px.errors (eSeverity, eid, eTerse, eVerbose) VALUES ('message', 39124, 'Tool Not Open',   'The tool is not completely open (and may be closed)');
+INSERT INTO px.errors (eSeverity, eid, eTerse, eVerbose) VALUES ('message', 30124, 'Tool Open',       'The tool is completely open');
+INSERT INTO px.errors (eSeverity, eid, eTerse, eVerbose) VALUES ('message', 39125, 'Tool Not Closed',   'The tool is not completely closed (and may be open)');
+INSERT INTO px.errors (eSeverity, eid, eTerse, eVerbose) VALUES ('message', 30125, 'Tool Close',       'The tool is completely closed');
+INSERT INTO px.errors (eSeverity, eid, eTerse, eVerbose) VALUES ('message', 39126, 'Limit Switch 1 Closed',   'The gripper is in the diffractometer position');
+INSERT INTO px.errors (eSeverity, eid, eTerse, eVerbose) VALUES ('message', 30126, 'Limit Switch 1 Open',     'The gripper is not in the diffractometer position');
+INSERT INTO px.errors (eSeverity, eid, eTerse, eVerbose) VALUES ('message', 39127, 'Limit Switch 2 Closed',   'The gripper is in the dewar position');
+INSERT INTO px.errors (eSeverity, eid, eTerse, eVerbose) VALUES ('message', 30127, 'Limit Switch 2 Open',     'The gripper is not in the dewar position');
+
+INSERT INTO cats.di2error (d2ei, d2eeup, d2eedown) VALUES ( b'1'::bit(99) >> 21, 30121, 39121);
+INSERT INTO cats.di2error (d2ei, d2eeup, d2eedown) VALUES ( b'1'::bit(99) >> 22, 30122, 39122);
+INSERT INTO cats.di2error (d2ei, d2eeup, d2eedown) VALUES ( b'1'::bit(99) >> 23, 30123, 39123);
+INSERT INTO cats.di2error (d2ei, d2eeup, d2eedown) VALUES ( b'1'::bit(99) >> 24, 30124, 39124);
+INSERT INTO cats.di2error (d2ei, d2eeup, d2eedown) VALUES ( b'1'::bit(99) >> 25, 30125, 39125);
+INSERT INTO cats.di2error (d2ei, d2eeup, d2eedown) VALUES ( b'1'::bit(99) >> 26, 30126, 39126);
+INSERT INTO cats.di2error (d2ei, d2eeup, d2eedown) VALUES ( b'1'::bit(99) >> 27, 30127, 39127);
+
+
+INSERT INTO px.errors (eSeverity, eid, eTerse, eVerbose) VALUES ('message', 39147, 'Process Input 5 is 1',  'Process Input 5 is 1, whatever that means');
+INSERT INTO px.errors (eSeverity, eid, eTerse, eVerbose) VALUES ('message', 30147, 'Process Input 5 is 0',  'Process Input 5 is 0, whatever that means');
+INSERT INTO px.errors (eSeverity, eid, eTerse, eVerbose) VALUES ('message', 39148, 'Process Input 6 is 1',  'Process Input 6 is 1, whatever that means');
+INSERT INTO px.errors (eSeverity, eid, eTerse, eVerbose) VALUES ('message', 30148, 'Process Input 6 is 0',  'Process Input 6 is 0, whatever that means');
+INSERT INTO px.errors (eSeverity, eid, eTerse, eVerbose) VALUES ('message', 39149, 'Process Input 7 is 1',  'Process Input 7 is 1, whatever that means');
+INSERT INTO px.errors (eSeverity, eid, eTerse, eVerbose) VALUES ('message', 30149, 'Process Input 7 is 0',  'Process Input 7 is 0, whatever that means');
+INSERT INTO px.errors (eSeverity, eid, eTerse, eVerbose) VALUES ('message', 39150, 'Process Input 8 is 1',  'Process Input 8 is 1, whatever that means');
+INSERT INTO px.errors (eSeverity, eid, eTerse, eVerbose) VALUES ('message', 30150, 'Process Input 8 is 0',  'Process Input 8 is 0, whatever that means');
+INSERT INTO px.errors (eSeverity, eid, eTerse, eVerbose) VALUES ('message', 39151, 'Process Input 9 is 1',  'Process Input 9 is 1, whatever that means');
+INSERT INTO px.errors (eSeverity, eid, eTerse, eVerbose) VALUES ('message', 30151, 'Process Input 9 is 0',  'Process Input 9 is 0, whatever that means');
+INSERT INTO px.errors (eSeverity, eid, eTerse, eVerbose) VALUES ('message', 39152, 'Process Input 10 is 1',  'Process Input 10 is 1, whatever that means');
+INSERT INTO px.errors (eSeverity, eid, eTerse, eVerbose) VALUES ('message', 30152, 'Process Input 10 is 0',  'Process Input 10 is 0, whatever that means');
+INSERT INTO px.errors (eSeverity, eid, eTerse, eVerbose) VALUES ('message', 39153, 'Process Input 11 is 1',  'Process Input 11 is 1, whatever that means');
+INSERT INTO px.errors (eSeverity, eid, eTerse, eVerbose) VALUES ('message', 30153, 'Process Input 11 is 0',  'Process Input 11 is 0, whatever that means');
+INSERT INTO px.errors (eSeverity, eid, eTerse, eVerbose) VALUES ('message', 39154, 'Process Input 12 is 1',  'Process Input 12 is 1, whatever that means');
+INSERT INTO px.errors (eSeverity, eid, eTerse, eVerbose) VALUES ('message', 30154, 'Process Input 12 is 0',  'Process Input 12 is 0, whatever that means');
+
+INSERT INTO cats.di2error (d2ei, d2eeup, d2eedown) VALUES ( b'1'::bit(99) >> 47, 30147, 39147);
+INSERT INTO cats.di2error (d2ei, d2eeup, d2eedown) VALUES ( b'1'::bit(99) >> 48, 30148, 39148);
+INSERT INTO cats.di2error (d2ei, d2eeup, d2eedown) VALUES ( b'1'::bit(99) >> 49, 30149, 39149);
+INSERT INTO cats.di2error (d2ei, d2eeup, d2eedown) VALUES ( b'1'::bit(99) >> 50, 30150, 39150);
+INSERT INTO cats.di2error (d2ei, d2eeup, d2eedown) VALUES ( b'1'::bit(99) >> 51, 30151, 39151);
+INSERT INTO cats.di2error (d2ei, d2eeup, d2eedown) VALUES ( b'1'::bit(99) >> 52, 30152, 39152);
+INSERT INTO cats.di2error (d2ei, d2eeup, d2eedown) VALUES ( b'1'::bit(99) >> 53, 30153, 39153);
+INSERT INTO cats.di2error (d2ei, d2eeup, d2eedown) VALUES ( b'1'::bit(99) >> 54, 30154, 39154);
+
+
+INSERT INTO px.errors (eSeverity, eid, eTerse, eVerbose) VALUES ('message', 39189, 'Vi0 is 1',  'Virtual Input 0 is 1, whatever that means');
+INSERT INTO px.errors (eSeverity, eid, eTerse, eVerbose) VALUES ('message', 30189, 'Vi0 is 0',  'Virtual Input 0 is 0, whatever that means');
+INSERT INTO px.errors (eSeverity, eid, eTerse, eVerbose) VALUES ('message', 39190, 'Vi1 is 1',  'Virtual Input 1 is 1, whatever that means');
+INSERT INTO px.errors (eSeverity, eid, eTerse, eVerbose) VALUES ('message', 30190, 'Vi1 is 0',  'Virtual Input 1 is 0, whatever that means');
+INSERT INTO px.errors (eSeverity, eid, eTerse, eVerbose) VALUES ('message', 39191, 'Vi2 is 1',  'Virtual Input 2 is 1, whatever that means');
+INSERT INTO px.errors (eSeverity, eid, eTerse, eVerbose) VALUES ('message', 30191, 'Vi2 is 0',  'Virtual Input 2 is 0, whatever that means');
+INSERT INTO px.errors (eSeverity, eid, eTerse, eVerbose) VALUES ('message', 39192, 'Vi3 is 1',  'Virtual Input 3 is 1, whatever that means');
+INSERT INTO px.errors (eSeverity, eid, eTerse, eVerbose) VALUES ('message', 30192, 'Vi3 is 0',  'Virtual Input 3 is 0, whatever that means');
+INSERT INTO px.errors (eSeverity, eid, eTerse, eVerbose) VALUES ('message', 39193, 'Vi4 is 1',  'Virtual Input 4 is 1, whatever that means');
+INSERT INTO px.errors (eSeverity, eid, eTerse, eVerbose) VALUES ('message', 30193, 'Vi4 is 0',  'Virtual Input 4 is 0, whatever that means');
+INSERT INTO px.errors (eSeverity, eid, eTerse, eVerbose) VALUES ('message', 39194, 'Vi5 is 1',  'Virtual Input 5 is 1, whatever that means');
+INSERT INTO px.errors (eSeverity, eid, eTerse, eVerbose) VALUES ('message', 30194, 'Vi5 is 0',  'Virtual Input 5 is 0, whatever that means');
+INSERT INTO px.errors (eSeverity, eid, eTerse, eVerbose) VALUES ('message', 39195, 'Vi6 is 1',  'Virtual Input 6 is 1, whatever that means');
+INSERT INTO px.errors (eSeverity, eid, eTerse, eVerbose) VALUES ('message', 30195, 'Vi6 is 0',  'Virtual Input 6 is 0, whatever that means');
+INSERT INTO px.errors (eSeverity, eid, eTerse, eVerbose) VALUES ('message', 39196, 'Vi7 is 1',  'Virtual Input 7 is 1, whatever that means');
+INSERT INTO px.errors (eSeverity, eid, eTerse, eVerbose) VALUES ('message', 30196, 'Vi7 is 0',  'Virtual Input 7 is 0, whatever that means');
+INSERT INTO px.errors (eSeverity, eid, eTerse, eVerbose) VALUES ('message', 39197, 'Vi8 is 1',  'Virtual Input 8 is 1, whatever that means');
+INSERT INTO px.errors (eSeverity, eid, eTerse, eVerbose) VALUES ('message', 30197, 'Vi8 is 0',  'Virtual Input 8 is 0, whatever that means');
+INSERT INTO px.errors (eSeverity, eid, eTerse, eVerbose) VALUES ('message', 39198, 'Vi9 is 1',  'Virtual Input 9 is 1, whatever that means');
+INSERT INTO px.errors (eSeverity, eid, eTerse, eVerbose) VALUES ('message', 30198, 'Vi9 is 0',  'Virtual Input 9 is 0, whatever that means');
+
+INSERT INTO cats.di2error (d2ei, d2eeup, d2eedown) VALUES ( b'1'::bit(99) >> 89, 30189, 39189);
+INSERT INTO cats.di2error (d2ei, d2eeup, d2eedown) VALUES ( b'1'::bit(99) >> 90, 30190, 39190);
+INSERT INTO cats.di2error (d2ei, d2eeup, d2eedown) VALUES ( b'1'::bit(99) >> 91, 30191, 39191);
+INSERT INTO cats.di2error (d2ei, d2eeup, d2eedown) VALUES ( b'1'::bit(99) >> 92, 30192, 39192);
+INSERT INTO cats.di2error (d2ei, d2eeup, d2eedown) VALUES ( b'1'::bit(99) >> 93, 30193, 39193);
+INSERT INTO cats.di2error (d2ei, d2eeup, d2eedown) VALUES ( b'1'::bit(99) >> 94, 30194, 39194);
+INSERT INTO cats.di2error (d2ei, d2eeup, d2eedown) VALUES ( b'1'::bit(99) >> 95, 30195, 39195);
+INSERT INTO cats.di2error (d2ei, d2eeup, d2eedown) VALUES ( b'1'::bit(99) >> 96, 30196, 39196);
+INSERT INTO cats.di2error (d2ei, d2eeup, d2eedown) VALUES ( b'1'::bit(99) >> 97, 30197, 39197);
+INSERT INTO cats.di2error (d2ei, d2eeup, d2eedown) VALUES ( b'1'::bit(99) >> 98, 30198, 39198);
+
+
 
 CREATE OR REPLACE FUNCTION cats.setdi( theDi bit(99)) RETURNS VOID AS $$
   INSERT INTO cats.di (diStn, dii) VALUES (px.getStation(), $1);
