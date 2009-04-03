@@ -529,7 +529,7 @@ class CatsOk:
         #
         # Check if the magnet state makes sense
         #
-        if self.checkMountedSample and pathName != 'get' and (datetime.datetime.now() - self.sampleMounted["timestamp"] > datetime.timedelta(0,3)):
+        if self.checkMountedSample and pathName != 'get' and (datetime.datetime.now() - self.sampleMounted["timestamp"] > datetime.timedelta(0,5)):
             self.checkMountedSample = False
             qr = self.db.query( "select px.getmagnetstate() as ms")
             ms = qr.dictresult()[0]["ms"]
