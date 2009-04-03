@@ -127,7 +127,7 @@ class CatsOk:
     statusPositionLast = None
     statusMessageLast  = None
     waiting = False     # true when the last status reponse did not contain an entire message (more to come)
-    cmdQueue = []       # queue of commands received from postgresql
+    cmdQueue = []       # queue of commands received from postgresql: tuple (cmd,startTime)
     statusQueue = []    # queue of status requests to send to cats server
     statusFailedPushCount = 0
 
@@ -158,19 +158,29 @@ class CatsOk:
             self.p.register( self.t2, select.POLLIN | select.POLLPRI)
         return rtn
 
-    def pushCmd( self, cmd):
+    def compareCmdQueue( self, x, y):
+        if x[1] < y[1]:
+            return -1
+        if x[1] > y[1]:
+            return 1
+        return 0
+
+    def pushCmd( self, cmd, startTime=datetime.datetime.now()):
         print "pushing command '%s'" % (cmd)
         if cmd == 'abort' or cmd == 'panic':
             self.cmdQueue = []
             self.afterCmd = []
-        self.cmdQueue.append( cmd)
+            startTime = datetime.datetime.now()
+        self.cmdQueue.append( (cmd,startTime))
+        self.cmdQueue.sort( self.compareCmdQueue)
         self.p.register( self.t1, select.POLLIN | select.POLLPRI | select.POLLOUT)
 
 
     def nextCmd( self):
         rtn = None
         if len( self.cmdQueue) > 0:
-            rtn = self.cmdQueue.pop(0)
+            if self.cmdQueue[0][1] <= datetime.datetime.now():
+                rtn = self.cmdQueue.pop(0)[0]
         else:
             self.p.register( self.t1, select.POLLIN | select.POLLPRI)
 
@@ -428,7 +438,7 @@ class CatsOk:
                 rslt = qr.dictresult()[0]["rslt"]
                 if rslt == "t":
                     self.haveAirRights = True
-                    self.pushCmd( "vdi90on")
+                    self.pushCmd( "vdi90on", datetime.datetime.now())
                     print "received haveAirRights and setting vdi90on"
 
             if runFlag and not self.needAirRights and self.haveAirRights:
