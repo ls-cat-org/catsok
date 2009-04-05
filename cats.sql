@@ -57,6 +57,7 @@ CREATE OR REPLACE FUNCTION cats.statesInsertTF() returns trigger as $$
         RETURN NULL;
       END IF;
     END IF;
+    DELETE FROM cats.states WHERE cskey < NEW.cskey and csstn=px.getStation();
     RETURN NEW;
   END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
@@ -239,6 +240,7 @@ CREATE OR REPLACE FUNCTION cats.doInsertTF() returns trigger AS $$
       UPDATE cats.do SET doTSLast=now() WHERE doKey=prev.doKey;
       RETURN NULL;
     END IF;
+    DELETE FROM cats.do WHERE dokey < NEW.dokey and dostn=px.getStation();
     return NEW;
   END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
@@ -296,7 +298,7 @@ CREATE OR REPLACE FUNCTION cats.diInsertTF() returns trigger AS $$
         END IF;
       END LOOP;
     END IF;
-
+    DELETE FROM cats.di WHERE dikey<NEW.dikey and distn=px.getStation();
     return NEW;
   END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
@@ -329,7 +331,7 @@ ALTER FUNCTION cats.chkdi( bit(99), bit(99), int) OWNER TO lsadmin;
 
 
 
-CREATE TYPE cats.getrobotstatetype AS ( power boolean, lid1 boolean, lid2 boolean, lid3 boolean, regon boolean, magon boolean, toolopen boolean, path text);
+CREATE TYPE cats.getrobotstatetype AS ( power boolean, lid1 boolean, lid2 boolean, lid3 boolean, regon boolean, magon boolean, toolopen boolean, path text, progress float);
 CREATE OR REPLACE FUNCTION cats.getrobotstate() returns cats.getrobotstatetype AS $$
   DECLARE
     rtn cats.getrobotstatetype;
@@ -348,6 +350,7 @@ CREATE OR REPLACE FUNCTION cats.getrobotstate() returns cats.getrobotstatetype A
       rtn.magon := (b'1'::bit(55) >> 4) & sto != 0::bit(55);
     END IF;
     SELECT cspower, csln2reg, cspathname INTO rtn.power, rtn.regon, rtn.path FROM cats.states WHERE csstn=px.getstation() ORDER BY cskey desc limit 1;
+    SELECT cats.fractiondone() INTO rtn.progress;
     return rtn;
   END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
@@ -988,13 +991,18 @@ CREATE TABLE cats._queue (
        qKey serial primary key,		-- our key
        qts timestamp with time zone not null default now(),
        qaddr inet not null,		-- IP address of catsOK routine
-       qCmd text not null		-- the command
+       qCmd text not null,		-- the command
+       qStart timestamp with time zone not null default now()	-- Don't start before this time
 );
 ALTER TABLE cats._queue OWNER TO lsadmin;
        
-
-
 CREATE OR REPLACE FUNCTION cats._pushqueue( cmd text) RETURNS VOID AS $$
+  SELECT cats._pushqueue( $1, now());
+$$ LANGUAGE SQL SECURITY DEFINER;
+ALTER FUNCTION cats._pushqueue( text) OWNER TO lsadmin;
+
+
+CREATE OR REPLACE FUNCTION cats._pushqueue( cmd text, startTime timestamp with time zone) RETURNS VOID AS $$
   DECLARE
     c text;	    -- trimmed command
     ntfy text;	    -- used to generate notify command
@@ -1012,7 +1020,15 @@ CREATE OR REPLACE FUNCTION cats._pushqueue( cmd text) RETURNS VOID AS $$
         DELETE FROM cats._queue WHERE qaddr = theRobot;
       END IF;
 
-      INSERT INTO cats._queue (qcmd, qaddr) VALUES (c, theRobot);
+      --
+      -- replace NULL start with now
+      IF startTime is null THEN
+        INSERT INTO cats._queue (qcmd, qaddr) VALUES (c, theRobot);
+      ELSE
+        INSERT INTO cats._queue (qcmd, qaddr, qStart) VALUES (c, theRobot, startTime);
+      END IF;
+
+
       IF FOUND THEN
         EXECUTE 'NOTIFY ' || ntfy;
       ELSE
@@ -1022,17 +1038,21 @@ CREATE OR REPLACE FUNCTION cats._pushqueue( cmd text) RETURNS VOID AS $$
     RETURN;
   END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
-ALTER FUNCTION cats._pushqueue( text) OWNER TO lsadmin;
+ALTER FUNCTION cats._pushqueue( text, timestamp with time zone) OWNER TO lsadmin;
 
-CREATE OR REPLACE FUNCTION cats._popqueue() RETURNS TEXT AS $$
+CREATE TYPE cats.popqueuetype AS (cmd text, startTime timestamp with time zone);
+
+CREATE OR REPLACE FUNCTION cats._popqueue() RETURNS cats.popqueuetype AS $$
   DECLARE
-    rtn text;		-- return value
-    qk   bigint;	-- queue key of item
+    rtn cats.popqueuetype;	-- return value
+    qk   bigint;		-- queue key of item
   BEGIN
-    rtn := '';
-    SELECT qCmd, qKey INTO rtn, qk FROM cats._queue WHERE qaddr=inet_client_addr() ORDER BY qKey ASC LIMIT 1;
+    rtn.cmd := '';
+    SELECT qCmd, qKey, qStart INTO rtn.cmd, qk, rtn.startTime FROM cats._queue WHERE qaddr=inet_client_addr() ORDER BY qKey ASC LIMIT 1;
     IF NOT FOUND THEN
-      return '';
+      rtn.cmd       := '';
+      rtn.startTime := NULL;
+      return rtn;
     END IF;
     DELETE FROM cats._queue WHERE qKey=qk;
     return rtn;
@@ -1170,12 +1190,37 @@ CREATE TABLE cats._toolCorrection (
 );
 ALTER TABLE cats._toolCorrection OWNER TO lsadmin;
 
+CREATE TABLE cats._toolTiming (
+--
+-- Catalog of times needed from the start of a path to the requirement for airrights
+--
+       ttkey serial primary key,
+--       ttstn bigint references px.stations (stnkey),
+       ttTool int not null default 0,
+       ttPath text not null default '',
+       ttair interval not null default '0'::interval,  -- time to air rights needed
+       ttchkmag interval not null default '0'::interval, -- time to check smart magnet state
+       ttnoair interval not null default '0'::interval, -- time to no air rights needed
+       ttdone  interval not null default '0'::interval  -- time until 'done'  (finished drying for get, ttnoair otherwise
+);
+ALTER TABLE cats._toolTiming OWNER TO lsadmin;
 
 CREATE OR REPLACE FUNCTION cats._mkcryocmd( theCmd text, theId int, theNewId int, xx int, yy int, zz int) RETURNS INT AS $$
+  SELECT cats._mkcryocmd( $1, $2, $3, $4, $5, $6, 0.0::numeric);
+$$ LANGUAGE SQL SECURITY DEFINER;
+ALTER FUNCTION cats._mkcryocmd( text, int, int, int, int, int) OWNER TO lsadmin;
+
+
+
+
+CREATE OR REPLACE FUNCTION cats._mkcryocmd( theCmd text, theId int, theNewId int, xx int, yy int, zz int, esttime numeric) RETURNS INT AS $$
   --
   -- All the cryocrystallography commands have very similar requirements
   -- This is a low level function to service the put, get, (and getput), as well as the brcd flavors
   -- Also, the barcode, transfer, soak, dry, home, safe, and reference commands are supported here
+  --
+  -- esttime is the number of seconds before we'll likely be able to get the air rights
+  -- used to calculate the time parameter for the command
   --
   DECLARE
     rtn int;	-- return: 1 on success, 0 on failure
@@ -1283,10 +1328,55 @@ CREATE OR REPLACE FUNCTION cats._mkcryocmd( theCmd text, theId int, theNewId int
     END IF;
 
     PERFORM cats._pushqueue( cats._gencmd( currval( 'cats._args_akey_seq')));
+    INSERT INTO cats.curpath (cptool, cpstn, cppath) VALUES( rtool1, px.getstation(), theCmd);
     return 1;
   END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
-ALTER FUNCTION cats._mkcryocmd( text, int, int, int, int, int) OWNER TO lsadmin;
+ALTER FUNCTION cats._mkcryocmd( text, int, int, int, int, int, numeric) OWNER TO lsadmin;
+
+CREATE TABLE cats.curpath(
+  cpkey serial primary key,   -- our key
+  cpts timestamp with time zone default now(),
+  cpdoneTime timestamp with time zone default now()+'00:00:02',
+  cptool int,		      -- current tool
+  cpstn  bigint not null,     -- referneces px.stations (stnkey),
+  cppath text
+);
+ALTER TABLE cats.curpath OWNER TO lsadmin;
+
+CREATE OR REPLACE FUNCTION cats.curpathInsertTF() returns trigger AS $$
+  DECLARE
+   cp record;
+   doneTime timestamp with time zone;
+  BEGIN
+    SELECT NEW.cpts + ttdone INTO doneTime FROM cats._tooltiming WHERE NEW.cptool=tttool and NEW.cppath=ttpath;
+    IF FOUND THEN
+        NEW.doneTime := doneTime;
+    END IF;
+    DELETE FROM cats.curpath WHERE cpkey<NEW.cpkey and cpstn=NEW.cpstn;
+    return NEW;
+  END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+ALTER FUNCTION cats.curpathInsertTF() OWNER TO lsadmin;
+CREATE TRIGGER curpathInsertTrigger BEFORE INSERT ON cats.curpath FOR EACH ROW EXECUTE PROCEDURE cats.curpathInsertTF();
+
+CREATE OR REPLACE FUNCTION cats.fractionDone() returns float as $$
+  DECLARE
+    rtn float;
+    cp record;
+  BEGIN
+    SELECT extract( epoch from (now() - cpts))/(0.1+abs(extract( epoch from (cpdonetime-cpts)))) INTO rtn FROM cats.curpath WHERE cpstn=px.getstation() ORDER BY cpkey desc LIMIT 1;
+    IF NOT FOUND OR rtn > 1.0 THEN
+      rtn := 1.0;
+    END IF;
+    IF rtn < 0.0 THEN
+      rtn := 0.0;
+    END IF;
+    RETURN rtn;
+  END
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+ALTER FUNCTION cats.fractionDone() OWNER TO lsadmin;
+
 
 CREATE OR REPLACE FUNCTION cats.put( theId int, x int, y int, z int) returns int AS $$
   SELECT cats._mkcryocmd( 'put', $1, 0, $2, $3, $4);
