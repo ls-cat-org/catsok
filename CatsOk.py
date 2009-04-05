@@ -83,7 +83,6 @@ class CatsOk:
     """
     inRecoveryMode = False
     workingPath = ""    # path we are currently running
-    afterCmd    = []
     pathsNeedingAirRights = [
         "put", "put_bcrd", "get", "getput", "getput_bcrd"
         ]
@@ -127,7 +126,22 @@ class CatsOk:
     statusPositionLast = None
     statusMessageLast  = None
     waiting = False     # true when the last status reponse did not contain an entire message (more to come)
+                        #
+                        # Command Queues
+                        #  There are two queues: cmdQueue and afterCmd
+                        #      cmdQueue runs the given command at the specified time
+                        #      afterCmd saves path commands (with the start time) until the current path is no longer running
+                        #
+                        #   If a path is running then new path commands are added to afterCmd
+                        #   If a path command is not running or if the command to be added is not a path command then
+                        #   the command is added directly to cmdQueue
+                        #   This gets around the problem that the CATS will ignore commands that it doesn't like while running a path.
+                        #   But allows us to immediately run a command while a path is running if it is likely to be executed.
+                        #   This is a long winded explaination.  This allows us to send vdiXX commands while a path is running while queuing up the next getput/get/put
+                        #   vid90 = airrights, so we really need to be able to do this.
+                        #
     cmdQueue = []       # queue of commands received from postgresql: tuple (cmd,startTime)
+    afterCmd    = []    # queue of commands to run after the current one is done
     statusQueue = []    # queue of status requests to send to cats server
     statusFailedPushCount = 0
 
@@ -205,15 +219,16 @@ class CatsOk:
             #
             self.dbFlag = True
             while( self.dbFlag):
-                qr = self.db.query( "select cmd, startTime from cats._popqueue()")
+                qr = self.db.query( "select cmd, startEpoch as se from cats._popqueue()")
                 r = qr.dictresult()[0]
                 if len( r["cmd"]) > 0:
                     cmd = r["cmd"]
+                    startTime = datetime.datetime.fromtimestamp(r["se"])
                 else:
                     if self.workingPath == "" and len(self.afterCmd) > 0:
-                        print "Queuing Command: ", self.afterCmd[0]
-                        self.pushCmd( self.afterCmd[0])
-                        self.workingPath = self.afterCmd[0]
+                        print "Queuing Command: ", self.afterCmd[0][0]
+                        self.pushCmd( self.afterCmd[0][0], self.afterCmd[0][1])
+                        self.workingPath = self.afterCmd[0][0]
                         self.afterCmd.pop(0)
                     self.dbFlag = False
                     return True
@@ -223,26 +238,27 @@ class CatsOk:
                 #
                 if cmd.find( "(") > 0:
                     try:
-                        # Pick off the path name and test it against those needing air rights: We'll need a second list of commands to test if we ever want to call one that does not need air rights
+                        # Pick off the path name and test it against those needing air rights:
+                        #  We'll need a second list of commands to test if we ever want to call one that does not need air rights
                         trialPath = cmd[0:cmd.find("(")]
                         ndx = self.pathsNeedingAirRights.index( trialPath)
                     except ValueError:
                         #
                         # No path found: just push the command and hope for the best
-                        self.pushCmd( cmd)
+                        self.pushCmd( cmd, startTime)
                         self.workingPath = cmd
                     else:
                         #
                         # We found one: save it for later if we are busy now
                         #
                         if self.workingPath != "":
-                            self.afterCmd.append(cmd)
+                            self.afterCmd.append((cmd, startTime))
                             print "Saving Command: ", cmd
                         else:
-                            self.pushCmd( cmd)
+                            self.pushCmd( cmd, startTime)
                             self.workingPath = cmd
                 else:
-                    self.pushCmd( cmd)
+                    self.pushCmd( cmd, startTime)
                     self.workingPath = cmd
         return True
 
