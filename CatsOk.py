@@ -205,7 +205,7 @@ class CatsOk:
             #
             self.dbFlag = True
             while( self.dbFlag):
-                qr = self.db.query( "select cats._popqueue() as cmd")
+                qr = self.db.query( "select cmd, startTime from cats._popqueue()")
                 r = qr.dictresult()[0]
                 if len( r["cmd"]) > 0:
                     cmd = r["cmd"]
