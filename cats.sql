@@ -1040,7 +1040,7 @@ CREATE OR REPLACE FUNCTION cats._pushqueue( cmd text, startTime timestamp with t
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 ALTER FUNCTION cats._pushqueue( text, timestamp with time zone) OWNER TO lsadmin;
 
-CREATE TYPE cats.popqueuetype AS (cmd text, startTime timestamp with time zone);
+CREATE TYPE cats.popqueuetype AS (cmd text, startEpoch float);
 
 CREATE OR REPLACE FUNCTION cats._popqueue() RETURNS cats.popqueuetype AS $$
   DECLARE
@@ -1048,10 +1048,10 @@ CREATE OR REPLACE FUNCTION cats._popqueue() RETURNS cats.popqueuetype AS $$
     qk   bigint;		-- queue key of item
   BEGIN
     rtn.cmd := '';
-    SELECT qCmd, qKey, qStart INTO rtn.cmd, qk, rtn.startTime FROM cats._queue WHERE qaddr=inet_client_addr() ORDER BY qKey ASC LIMIT 1;
+    SELECT qCmd, qKey, extract(epoch from qStart)::float INTO rtn.cmd, qk, rtn.startEpoch FROM cats._queue WHERE qaddr=inet_client_addr() ORDER BY qKey ASC LIMIT 1;
     IF NOT FOUND THEN
       rtn.cmd       := '';
-      rtn.startTime := NULL;
+      rtn.startEpoch := NULL;
       return rtn;
     END IF;
     DELETE FROM cats._queue WHERE qKey=qk;
