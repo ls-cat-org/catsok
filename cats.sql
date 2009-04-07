@@ -533,6 +533,9 @@ CREATE OR REPLACE FUNCTION cats.setdi( theDi bit(99)) RETURNS VOID AS $$
 $$ LANGUAGE SQL SECURITY DEFINER;
 ALTER FUNCTION cats.setdi( bit(99)) OWNER TO lsadmin;
 
+
+
+
 CREATE TABLE cats.io (
        ioKey serial primary key,
        ioTSStart timestamp with time zone default now(),
@@ -912,7 +915,8 @@ CREATE OR REPLACE FUNCTION cats.positionsInsertTF() returns trigger as $$
         RETURN NULL;
       END IF;
     END IF;
-    RETURN NEW;
+    DELETE FROM cats.positions WHERE pStn=px.getStation();
+   RETURN NEW;
   END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 ALTER FUNCTION cats.positionsInsertTF() OWNER TO lsadmin;
@@ -939,6 +943,25 @@ CREATE OR REPLACE FUNCTION cats.setPosition() returns void as $$
   END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 ALTER FUNCTION cats.setPosition() OWNER TO lsadmin;
+
+
+CREATE TABLE cats.diffPos(
+-- Diffactometer position
+       dpKey serial primary key,
+       dpTs timestamp with time zone,
+       dpStn bigint references px.stations (stnkey),
+       dpX numeric(20,6),
+       dpY numeric(20,6),
+       dpZ numeric(20,6),
+);
+ALTER TABLE cats.diffpos OWNER TO lsadmin;
+GRANT SELECT ON cats.diffpos TO PUBLIC;
+
+CREATE OR REPLACE FUNCTION cats.tooclose() returns boolean as $$
+  SELECT ((pX-dpX)*(pX-dpX)+(pY-dpY)*(py-dpY)+(pZ-dpZ)*(pZ-dpZ)) < 9.0E4 FROM cats.positions left join cats.diffPos on dpStn=pStn WHERE dpStn=px.getStation() order by pkey desc, dpkey desc limit 1;
+$$ LANGUAGE SQL SECURITY DEFINER;
+ALTER FUNCTION cats.tooclose() OWNER TO lsadmin;
+
 
 CREATE TABLE cats.messages (
        mKey serial primary key,
@@ -1195,7 +1218,7 @@ CREATE TABLE cats._toolTiming (
 -- Catalog of times needed from the start of a path to the requirement for airrights
 --
        ttkey serial primary key,
---       ttstn bigint references px.stations (stnkey),
+       ttstn bigint references px.stations (stnkey),
        ttTool int not null default 0,
        ttPath text not null default '',
        ttair interval not null default '0'::interval,  -- time to air rights needed
@@ -1244,6 +1267,7 @@ CREATE OR REPLACE FUNCTION cats._mkcryocmd( theCmd text, theId int, theNewId int
     rtool2 int;	-- robot's tool number
     rsmpl2 int;	-- robot's sample number
 
+    startTime timestamp with time zone;
     tc record;  -- tool correction: a kludge to finetune the diffractometer position
 
   BEGIN
@@ -1327,8 +1351,18 @@ CREATE OR REPLACE FUNCTION cats._mkcryocmd( theCmd text, theId int, theNewId int
       UPDATE cats._args SET aXShift = xx, aYShift = yy, aZShift = zz WHERE aKey=currval('cats._args_akey_seq');
     END IF;
 
-    PERFORM cats._pushqueue( cats._gencmd( currval( 'cats._args_akey_seq')));
-    INSERT INTO cats.curpath (cptool, cpstn, cppath) VALUES( rtool1, px.getstation(), theCmd);
+    SELECT CASE WHEN extract( epoch from ttair) < esttime
+                THEN to_timestamp( extract( epoch from now()) + esttime - extract( epoch from ttair))
+                ELSE now() END
+                INTO startTime
+                FROM cats._tooltiming
+                WHERE ttstn=px.getStation() and tttool=rtool1;
+    IF NOT FOUND THEN
+      startTime := now();
+    END IF;
+
+    PERFORM cats._pushqueue( cats._gencmd( currval( 'cats._args_akey_seq')), startTime);
+    INSERT INTO cats.curpath (cpts,cptool, cpstn, cppath) VALUES( startTime, rtool1, px.getstation(), theCmd);
     return 1;
   END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
@@ -1349,9 +1383,9 @@ CREATE OR REPLACE FUNCTION cats.curpathInsertTF() returns trigger AS $$
    cp record;
    doneTime timestamp with time zone;
   BEGIN
-    SELECT NEW.cpts + ttdone INTO doneTime FROM cats._tooltiming WHERE NEW.cptool=tttool and NEW.cppath=ttpath;
+    SELECT NEW.cpts + ttdone INTO doneTime FROM cats._tooltiming WHERE NEW.cptool=tttool and NEW.cppath=ttpath and NEW.cpstn=ttstn;
     IF FOUND THEN
-        NEW.doneTime := doneTime;
+        NEW.cpdoneTime := doneTime;
     END IF;
     DELETE FROM cats.curpath WHERE cpkey<NEW.cpkey and cpstn=NEW.cpstn;
     return NEW;
@@ -1377,23 +1411,49 @@ CREATE OR REPLACE FUNCTION cats.fractionDone() returns float as $$
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 ALTER FUNCTION cats.fractionDone() OWNER TO lsadmin;
 
-
+-------------
 CREATE OR REPLACE FUNCTION cats.put( theId int, x int, y int, z int) returns int AS $$
   SELECT cats._mkcryocmd( 'put', $1, 0, $2, $3, $4);
 $$ LANGUAGE sql SECURITY DEFINER;
 ALTER FUNCTION cats.put( int, int, int, int) OWNER TO lsadmin;
 
+CREATE OR REPLACE FUNCTION cats.put( theId int, x int, y int, z int, esttime numeric) returns int AS $$
+  SELECT cats._mkcryocmd( 'put', $1, 0, $2, $3, $4, $5);
+$$ LANGUAGE sql SECURITY DEFINER;
+ALTER FUNCTION cats.put( int, int, int, int, numeric) OWNER TO lsadmin;
+------------
 CREATE OR REPLACE FUNCTION cats.put_bcrd( theId int, x int, y int, z int) returns int AS $$
   SELECT cats._mkcryocmd( 'put_bcrd', $1, 0, $2, $3, $4);
 $$ LANGUAGE sql SECURITY DEFINER;
 ALTER FUNCTION cats.put_bcrd( int, int, int, int) OWNER TO lsadmin;
+
+CREATE OR REPLACE FUNCTION cats.put_bcrd( theId int, x int, y int, z int, esttime numeric) returns int AS $$
+  SELECT cats._mkcryocmd( 'put_bcrd', $1, 0, $2, $3, $4, $5);
+$$ LANGUAGE sql SECURITY DEFINER;
+ALTER FUNCTION cats.put_bcrd( int, int, int, int, numeric) OWNER TO lsadmin;
+
+-------------
 
 CREATE OR REPLACE FUNCTION cats.get( x int, y int, z int) returns int AS $$
   SELECT cats._mkcryocmd( 'get', 0, 0, $1, $2, $3);
 $$ LANGUAGE sql SECURITY DEFINER;
 ALTER FUNCTION cats.get( int, int, int) OWNER TO lsadmin;
 
+CREATE OR REPLACE FUNCTION cats.get( x int, y int, z int, esttime numeric) returns int AS $$
+  SELECT cats._mkcryocmd( 'get', 0, 0, $1, $2, $3, $4);
+$$ LANGUAGE sql SECURITY DEFINER;
+ALTER FUNCTION cats.get( int, int, int) OWNER TO lsadmin;
+
+
+----------
+
 CREATE OR REPLACE FUNCTION cats.getput( theId int, xx int, yy int, zz int) returns int AS $$
+  SELECT cats.getput( $1, $2, $3, $4, 0);
+$$ LANGUAGE sql SECURITY DEFINER;
+ALTER FUNCTION cats.getput( int, int, int, int) OWNER TO lsadmin;
+
+
+CREATE OR REPLACE FUNCTION cats.getput( theId int, xx int, yy int, zz int, esttime numeric) returns int AS $$
   DECLARE
     rtn int;
     tool1 int;
@@ -1403,23 +1463,30 @@ CREATE OR REPLACE FUNCTION cats.getput( theId int, xx int, yy int, zz int) retur
     SELECT cttoolno INTO tool2 FROM cats._cylinder2tool WHERE ctcyl = (theId                   & x'0000ff00'::int) >> 8;
 
     IF tool1 != tool2 THEN
-      PERFORM cats.get( xx, yy, zz);
-      SELECT cats.put( theId, xx, yy, zz) INTO rtn;
+      PERFORM cats.get( xx, yy, zz, esttime);
+      SELECT cats.put( theId, xx, yy, zz, esttime) INTO rtn;
     ELSE
-      SELECT cats._mkcryocmd( 'getput', theId, 0, xx, yy, zz) INTO rtn;
+      SELECT cats._mkcryocmd( 'getput', theId, 0, xx, yy, zz, esttime) INTO rtn;
     END IF;
     return rtn;
   END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
-ALTER FUNCTION cats.getput( int, int, int, int) OWNER TO lsadmin;
+ALTER FUNCTION cats.getput( int, int, int, int, numeric) OWNER TO lsadmin;
 
 
-
+--------
 
 CREATE OR REPLACE FUNCTION cats.getput_bcrd( theId int, x int, y int, z int) returns int AS $$
   SELECT cats._mkcryocmd( 'getput_bcrd', $1, 0, $2, $3, $4);
 $$ LANGUAGE sql SECURITY DEFINER;
 ALTER FUNCTION cats.getput_bcrd( int, int, int, int) OWNER TO lsadmin;
+
+CREATE OR REPLACE FUNCTION cats.getput_bcrd( theId int, x int, y int, z int, esttime numeric) returns int AS $$
+  SELECT cats._mkcryocmd( 'getput_bcrd', $1, 0, $2, $3, $4, $5);
+$$ LANGUAGE sql SECURITY DEFINER;
+ALTER FUNCTION cats.getput_bcrd( int, int, int, int, numeric) OWNER TO lsadmin;
+
+--------
 
 CREATE OR REPLACE FUNCTION cats.barcode( theId int) returns int AS $$
   SELECT cats._mkcryocmd( 'barcode', $1, 0, 0, 0, 0);
