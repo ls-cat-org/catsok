@@ -95,6 +95,10 @@ class CatsOk:
     lastPathName  = ""
     needAirRights = False
     haveAirRights = False
+    dpX = None
+    dpY = None
+    dpZ = None
+    inExclusionZone = False
 
     robotOn = None
     robotInRemote = None
@@ -224,6 +228,9 @@ class CatsOk:
                 if len( r["cmd"]) > 0:
                     cmd = r["cmd"]
                     startTime = datetime.datetime.fromtimestamp(r["se"])
+                    print r["se"], startTime
+                    d = startTime - datetime.datetime.now()
+                    print "Got command %s to be started in %d seconds" % (cmd, d.days*86400+d.seconds+d.microseconds/1000000)
                 else:
                     if self.workingPath == "" and len(self.afterCmd) > 0:
                         print "Queuing Command: ", self.afterCmd[0][0]
@@ -377,6 +384,16 @@ class CatsOk:
         self.db.query( "select cats.init()")
 
         #
+        # Find diffractometer position: assume it does not change while we are running
+        #
+        qs = "select dpx, dpy, dpz from cats.diffpos where dpstn=px.getstation()"
+        qr = self.db.query( qs)
+        r = qr.dictresult()[0]
+        self.dpX = r["dpx"]
+        self.dpY = r["dpy"]
+        self.dpZ = r["dpz"]
+
+        #
         # Set up poll object
         self.p = select.poll()
         self.p.register( self.t1.fileno(), select.POLLIN | select.POLLPRI)
@@ -403,12 +420,12 @@ class CatsOk:
             }
 
         self.srqst = {
-            "state"     : { "period" : 0.55, "last" : None, "rqstCnt" : 0, "rcvdCnt" : 0},
-            "do"        : { "period" : 0.5, "last" : None, "rqstCnt" : 0, "rcvdCnt" : 0},
-            "di"        : { "period" : 0.6, "last" : None, "rqstCnt" : 0, "rcvdCnt" : 0},
-            #"position"  : { "period" : 0.5, "last" : None, "rqstCnt" : 0, "rcvdCnt" : 0},
+            "state"     : { "period" : 0.55,   "last" : None, "rqstCnt" : 0, "rcvdCnt" : 0},
+            "do"        : { "period" : 0.5,    "last" : None, "rqstCnt" : 0, "rcvdCnt" : 0},
+            "di"        : { "period" : 0.6,    "last" : None, "rqstCnt" : 0, "rcvdCnt" : 0},
+            "position"  : { "period" : 0.51,   "last" : None, "rqstCnt" : 0, "rcvdCnt" : 0},
             "config"     : { "period" : 86400, "last" : None, "rqstCnt" : 0, "rcvdCnt" : 0},
-            "message"   : { "period" : 0.65, "last" : None, "rqstCnt" : 0, "rcvdCnt" : 0}
+            "message"   : { "period" : 0.65,   "last" : None, "rqstCnt" : 0, "rcvdCnt" : 0}
             }
 
     def close( self):
@@ -595,7 +612,6 @@ class CatsOk:
         self.srqst["position"]["rcvdCnt"] = self.srqst["position"]["rcvdCnt"] + 1
         if self.statusPositionLast != None and self.statusPositionLast == s:
             #self.db.query( "select cats.setposition()")
-            #self.db.query( "execute position_noArgs")
             return
 
         # One line command to an argument list
@@ -604,10 +620,52 @@ class CatsOk:
         if len(a) != 6:
             raise CatsOkError( 'Wrong number of arguments received in status state response: got %d, exptected 14' % (len(a)))
         #                               0   1   2   3   4  5
-        qs = "select cats.setposition( %s, %s, %s, %s, %s, %s)" %  ( a[0], a[1], a[2], a[3], a[4], a[5])
-        self.db.query( qs)
+        #qs = "select cats.setposition( %s, %s, %s, %s, %s, %s)" %  ( a[0], a[1], a[2], a[3], a[4], a[5])
+        #self.db.query( qs)
         self.statusPositionLast = s
+        #
+        # See if we are in the 300mm exclusion zone
+        #
+        x = float(a[0])
+        y = float(a[1])
+        z = float(a[2])
+        if ((x-self.dpX)*(x-self.dpX)+(y-self.dpY)*(y-self.dpY)+(z-self.dpZ)*(z-self.dpZ)) < 9E4:
+            print "In Exclusion zone"
+            #
+            # In exclusion zone
+            #
+            if not self.inExclusionZone:
+                # we are in the exclusion zone but thought that we were not
+                #
+                if not self.haveAirRights:
+                    # Opps, we don't have air rights.  This is bad.
+                    #
+                    print "Aborting: need air rights but don't have them"
+                    self.pushCmd("panic")
+                    self.db.query( "select px.pusherror( 39201,'')")   # post error message
+                    self.needAirRights = True
+                else:
+                    # We have the right to be here.  Just make a note
+                    self.db.query( "select px.pusherror( 39200,'')")
+                # set the flag
+                self.inExclusionZone = True
+        else:
+            print "Not in exclusion zone"
+            #
+            # We are NOT in the exclusion zone
+            if self.inExclusionZone:
+                # but we thought we were
+                self.db.query( "select px.pusherror( 30200,'')")
+                self.inExclusionZone = False
 
+            if self.haveAirRights:
+                # We have air rights, but do we need them anymore?
+                #
+                if self.workingPath == "":
+                    # we are not on a path, perhaps we've aborted?
+                    #
+                    self.needAirRights = False
+                    
 
     def statusConfigParse( self, s):
         pass
