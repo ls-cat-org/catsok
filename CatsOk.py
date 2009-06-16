@@ -557,7 +557,14 @@ class CatsOk:
             else:
                 print "Need Air Rights for path '%s'" % (pathName)
                 self.needAirRights = True
+
         self.lastPathName = pathName
+
+        #
+        # Give up air rights when not moving and not in the exclusion zone
+        #
+        if self.workingPath == "" and not self.inExclusionZone and self.haveAirRights:
+            self.needAirRights = False
 
         #
         # Check if the magnet state makes sense
@@ -623,6 +630,8 @@ class CatsOk:
         #qs = "select cats.setposition( %s, %s, %s, %s, %s, %s)" %  ( a[0], a[1], a[2], a[3], a[4], a[5])
         #self.db.query( qs)
         self.statusPositionLast = s
+        # print a[0],a[1],a[2],a[3],a[4],a[5]
+
         #
         # See if we are in the 300mm exclusion zone
         #
@@ -630,11 +639,11 @@ class CatsOk:
         y = float(a[1])
         z = float(a[2])
         if ((x-self.dpX)*(x-self.dpX)+(y-self.dpY)*(y-self.dpY)+(z-self.dpZ)*(z-self.dpZ)) < 9E4:
-            print "In Exclusion zone"
             #
             # In exclusion zone
             #
             if not self.inExclusionZone:
+                print "In Exclusion zone"
                 # we are in the exclusion zone but thought that we were not
                 #
                 if not self.haveAirRights:
@@ -650,10 +659,10 @@ class CatsOk:
                 # set the flag
                 self.inExclusionZone = True
         else:
-            print "Not in exclusion zone"
             #
             # We are NOT in the exclusion zone
             if self.inExclusionZone:
+                print "Not in exclusion zone"
                 # but we thought we were
                 self.db.query( "select px.pusherror( 30200,'')")
                 self.inExclusionZone = False
