@@ -493,19 +493,16 @@ class CatsOk:
             raise CatsOkError( 'Wrong number of arguments received in status state response: got %d, exptected 15 or 16' % (len(a)))
         #                            0            1            2             3           4          5   6   7   8   9  10   11         12           13           14
 
-        print "Barcode: ", a[11]
+        # print "Barcode: ", a[11]
         if self.statusStateLast == None or self.statusStateLast != s:
             b = []
             i = 0
             #             0           1           2         3       4         5      6       7       8        9     10        11        12          13         14
-            aType = ["::boolean","::boolean","::boolean","::text","::text","::int","::int","::int","::int","::int","::int","::text","::boolean","::boolean","::boolean"]
+            aType = ["::boolean","::boolean","::boolean","::text","::text","::int","::int","::int","::int","::int","::int","::text","::boolean","::boolean","::boolean","::float"]
             qs = "select cats.setstate( "
 
             needComma = False
             for zz in a:
-                if i == 15:     # kludge: IRELEC now sends 16 arguments (last is speed in percent).  Ignoring last one for now
-                    break;
-                
                 if zz == None or len(zz) == 0:
                     b.append("NULL")
                 else:
