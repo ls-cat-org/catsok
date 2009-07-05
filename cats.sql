@@ -26,7 +26,8 @@ CREATE TABLE cats.states (
        csBarcode text,
        csPathRunning boolean,
        csLN2Reg boolean,
-       csLN2Warming boolean
+       csLN2Warming boolean,
+       csToolSpeed float
 );
 ALTER TABLE cats.states OWNER TO lsadmin;
 
@@ -51,7 +52,8 @@ CREATE OR REPLACE FUNCTION cats.statesInsertTF() returns trigger as $$
         t.csBarcode = NEW.csBarcode AND
         t.csPathRunning = NEW.csPathRunning AND
         t.csLN2Reg = NEW.csLN2Reg AND
-        t.csLN2Warming = NEW.csLN2Warming
+        t.csLN2Warming = NEW.csLN2Warming AND
+        t.csToolSpeed  = NEW.csToolSpeed
       THEN
         UPDATE cats.states SET csTSLast = now() WHERE csKey = t.csKey;
         RETURN NULL;
@@ -65,6 +67,7 @@ ALTER FUNCTION cats.statesInsertTF() OWNER TO lsadmin;
 
 CREATE TRIGGER statesInsertTrigger BEFORE INSERT ON cats.states FOR EACH ROW EXECUTE PROCEDURE cats.statesInsertTF();
 
+drop function cats.setstate(boolean,boolean,boolean,text,text,int,int,int,int,int,int,text,boolean,boolean,boolean);
 
 CREATE OR REPLACE FUNCTION cats.setstate (
        power boolean,			--  0
@@ -81,21 +84,22 @@ CREATE OR REPLACE FUNCTION cats.setstate (
        barcode text,			-- 11
        pathRunning boolean,		-- 12
        LN2Reg boolean,			-- 13
-       LN2Warming boolean		-- 14
+       LN2Warming boolean,		-- 14
+       toolSpeed float			-- 15
 ) returns int as $$
 DECLARE
 BEGIN
   INSERT INTO cats.states ( csStn, csPower, csAutoMode, csDefaultStatus, csToolNumber, csPathName,
               csLidNumberOnTool, csSampleNumberOnTool, csLidNumberMounted, csSampleNumberMounted, csPlateNumber,
-              csWellNumber, csBarcode, csPathRunning, csLN2Reg, csLN2Warming)
+              csWellNumber, csBarcode, csPathRunning, csLN2Reg, csLN2Warming, csToolSpeed)
        VALUES (  px.getStation(), power, autoMode, defaultStatus, toolNumber,  pathName,
                  lidNumberOnTool, sampleNumberOnTool, lidNumberMounted, sampleNumberMounted, plateNumber,
-                 wellNumber, barcode, pathRunning, LN2Reg, LN2Warming);
+                 wellNumber, barcode, pathRunning, LN2Reg, LN2Warming, toolSpeed);
 
 
   IF FOUND then
-      PERFORM px.setMountedSample( toolNumber, lidNumberMounted, sampleNumberMounted);
-      PERFORM px.setTooledSample( toolNumber, lidNumberOnTool, sampleNumberOnTool);
+      PERFORM px.setMountedSample( toolNumber::text, lidNumberMounted::int, sampleNumberMounted::int);
+      PERFORM px.setTooledSample( toolNumber::text, lidNumberOnTool::int, sampleNumberOnTool::int);
     return 1;
   ELSE
     return 0;
@@ -119,7 +123,8 @@ ALTER FUNCTION cats.setstate (
        barcode text,			-- 11
        pathRunning boolean,		-- 12
        LN2Reg boolean,			-- 13
-       LN2Warming boolean		-- 14
+       LN2Warming boolean,		-- 14
+       toolspeed float			-- 15
 ) OWNER TO lsadmin;
 
 
@@ -175,7 +180,7 @@ CREATE OR REPLACE FUNCTION px.setMountedSample( tool text, lid int, sampleno int
     -- compute our position ID from the lid and sample number returned
     -- For sample mounted
       cdwr := lid + 2;
-      SELECT ((sampleno-1)/ctnsamps)::int + ctoff, (sampleno-1)%ctnsamps+1 INTO ccyl,csmp FROM cats._cylinder2tool WHERE ctToolName=tool or ctToolNo=tool LIMIT 1;
+      SELECT ((sampleno-1)/ctnsamps)::int + ctoff, (sampleno-1)%ctnsamps+1 INTO ccyl,csmp FROM cats._cylinder2tool WHERE ctToolName=tool or ctToolNo::text=tool LIMIT 1;
       sampId = (cstn<<24) | (cdwr<<16) | (ccyl<<8) | (csmp);
       
       UPDATE px.holderPositions set hpTempLoc = 0 WHERE hpTempLoc = diffId;
@@ -209,7 +214,7 @@ CREATE OR REPLACE FUNCTION px.setTooledSample( tool text, lid int, sampleno int)
     -- computer our position ID from the lid and sample number returned
     -- For sample mounted
       cdwr := lid + 2;
-      SELECT ((sampleno-1)/ctnsamps)::int + ctoff, (sampleno-1)%ctnsamps+1 INTO ccyl,csmp FROM cats._cylinder2tool WHERE ctToolName=tool or ctToolNo=tool LIMIT 1;
+      SELECT ((sampleno-1)/ctnsamps)::int + ctoff, (sampleno-1)%ctnsamps+1 INTO ccyl,csmp FROM cats._cylinder2tool WHERE ctToolName=tool or ctToolNo::text=tool LIMIT 1;
       sampId = (cstn<<24) | (cdwr<<16) | (ccyl<<8) | (csmp);
       
       UPDATE px.holderPositions set hpTempLoc = 0 WHERE hpTempLoc = toolId;
@@ -1015,17 +1020,19 @@ CREATE TABLE cats._queue (
        qts timestamp with time zone not null default now(),
        qaddr inet not null,		-- IP address of catsOK routine
        qCmd text not null,		-- the command
-       qStart timestamp with time zone not null default now()	-- Don't start before this time
+       qStart timestamp with time zone not null default now(),	-- Don't start before this time
+       qPath text default null,		-- the path (used for timing)
+       qTool int  default null		-- the tool to be used (for timing)
 );
 ALTER TABLE cats._queue OWNER TO lsadmin;
        
 CREATE OR REPLACE FUNCTION cats._pushqueue( cmd text) RETURNS VOID AS $$
-  SELECT cats._pushqueue( $1, now());
+  SELECT cats._pushqueue( $1, now(), NULL, NULL);
 $$ LANGUAGE SQL SECURITY DEFINER;
 ALTER FUNCTION cats._pushqueue( text) OWNER TO lsadmin;
 
 
-CREATE OR REPLACE FUNCTION cats._pushqueue( cmd text, startTime timestamp with time zone) RETURNS VOID AS $$
+CREATE OR REPLACE FUNCTION cats._pushqueue( cmd text, startTime timestamp with time zone, thePath text, theTool int) RETURNS VOID AS $$
   DECLARE
     c text;	    -- trimmed command
     ntfy text;	    -- used to generate notify command
@@ -1046,9 +1053,9 @@ CREATE OR REPLACE FUNCTION cats._pushqueue( cmd text, startTime timestamp with t
       --
       -- replace NULL start with now
       IF startTime is null THEN
-        INSERT INTO cats._queue (qcmd, qaddr) VALUES (c, theRobot);
+        INSERT INTO cats._queue (qcmd, qaddr, qpath, qtool) VALUES (c, theRobot, thePath, theTool);
       ELSE
-        INSERT INTO cats._queue (qcmd, qaddr, qStart) VALUES (c, theRobot, startTime);
+        INSERT INTO cats._queue (qcmd, qaddr, qStart) VALUES (c, theRobot, startTime, thePath, theTool);
       END IF;
 
 
@@ -1061,9 +1068,11 @@ CREATE OR REPLACE FUNCTION cats._pushqueue( cmd text, startTime timestamp with t
     RETURN;
   END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
-ALTER FUNCTION cats._pushqueue( text, timestamp with time zone) OWNER TO lsadmin;
+ALTER FUNCTION cats._pushqueue( text, timestamp with time zone, text, int) OWNER TO lsadmin;
 
-CREATE TYPE cats.popqueuetype AS (cmd text, startEpoch float);
+drop type cats.popqueuetype cascade;
+
+CREATE TYPE cats.popqueuetype AS (cmd text, startEpoch float, pqpath text, pqtool int);
 
 CREATE OR REPLACE FUNCTION cats._popqueue() RETURNS cats.popqueuetype AS $$
   DECLARE
@@ -1071,7 +1080,11 @@ CREATE OR REPLACE FUNCTION cats._popqueue() RETURNS cats.popqueuetype AS $$
     qk   bigint;		-- queue key of item
   BEGIN
     rtn.cmd := '';
-    SELECT qCmd, qKey, extract(epoch from qStart)::float INTO rtn.cmd, qk, rtn.startEpoch FROM cats._queue WHERE qaddr=inet_client_addr() ORDER BY qKey ASC LIMIT 1;
+    SELECT   qCmd,    qKey, extract(epoch from qStart)::float, qpath,      qtool
+        INTO rtn.cmd, qk,   rtn.startEpoch,                    rtn.pqpath, rtn.pqtool
+        FROM cats._queue
+        WHERE qaddr=inet_client_addr()
+        ORDER BY qKey ASC LIMIT 1;
     IF NOT FOUND THEN
       rtn.cmd       := '';
       rtn.startEpoch := NULL;
@@ -1091,6 +1104,7 @@ CREATE OR REPLACE FUNCTION cats.init() RETURNS VOID AS $$
   DECLARE
     ntfy text;
   BEGIN
+    PERFORM pg_advisory_lock( px.getstation(), 6);
     DELETE FROM cats._queue WHERE qaddr = inet_client_addr();    
     SELECT cnotifyrobot INTO ntfy FROM px._config WHERE cstnkey=px.getstation();
     IF FOUND THEN
@@ -1344,13 +1358,23 @@ CREATE OR REPLACE FUNCTION cats._mkcryocmd( theCmd text, theId int, theNewId int
     END IF;
 
 
+    --
+    -- Get the diffractometer correction
+    --
     SELECT * INTO tc FROM cats._toolCorrection WHERE tcstn=px.getStation() and tcTool = rtool1 ORDER BY tcKey DESC LIMIT 1;
     IF FOUND THEN
+    -- set the diffractometer correction additionally corrected
       UPDATE cats._args SET aXShift = xx + tc.tcx, aYShift = yy + tc.tcy, aZShift = zz + tc.tcz WHERE aKey=currval('cats._args_akey_seq');
     ELSE
+    -- set the diffractometer correction not additionally corrected
       UPDATE cats._args SET aXShift = xx, aYShift = yy, aZShift = zz WHERE aKey=currval('cats._args_akey_seq');
     END IF;
 
+    --
+    -- get a start time based on esttime parameter
+    -- The esttime is the approximate time that the diffractometer will give up the air rights
+    -- We'll plan to delay our start so that we first request air rights just after the diffractometer gives them up
+    --
     SELECT CASE WHEN extract( epoch from ttair) < esttime
                 THEN to_timestamp( extract( epoch from now()) + esttime - extract( epoch from ttair))
                 ELSE now() END
@@ -1358,10 +1382,14 @@ CREATE OR REPLACE FUNCTION cats._mkcryocmd( theCmd text, theId int, theNewId int
                 FROM cats._tooltiming
                 WHERE ttstn=px.getStation() and tttool=rtool1;
     IF NOT FOUND THEN
+      -- No timing available: just start right away
       startTime := now();
     END IF;
 
-    PERFORM cats._pushqueue( cats._gencmd( currval( 'cats._args_akey_seq')), startTime);
+    -- add path to the queue
+    PERFORM cats._pushqueue( cats._gencmd( currval( 'cats._args_akey_seq')), startTime, theCmd, rtool1);
+
+    -- update our current path for printing out busy bar
     INSERT INTO cats.curpath (cpts,cptool, cpstn, cppath) VALUES( startTime, rtool1, px.getstation(), theCmd);
     return 1;
   END;
@@ -1481,10 +1509,25 @@ CREATE OR REPLACE FUNCTION cats.getput_bcrd( theId int, x int, y int, z int) ret
 $$ LANGUAGE sql SECURITY DEFINER;
 ALTER FUNCTION cats.getput_bcrd( int, int, int, int) OWNER TO lsadmin;
 
-CREATE OR REPLACE FUNCTION cats.getput_bcrd( theId int, x int, y int, z int, esttime numeric) returns int AS $$
-  SELECT cats._mkcryocmd( 'getput_bcrd', $1, 0, $2, $3, $4, $5);
-$$ LANGUAGE sql SECURITY DEFINER;
-ALTER FUNCTION cats.getput_bcrd( int, int, int, int, numeric) OWNER TO lsadmin;
+CREATE OR REPLACE FUNCTION cats.getput_bcrd( theId int, xx int, yy int, zz int, esttime numeric) returns int AS $$
+  DECLARE
+    rtn int;
+    tool1 int;
+    tool2 int;
+  BEGIN
+    SELECT cttoolno INTO tool1 FROM cats._cylinder2tool WHERE ctcyl = (px.getCurrentSampleID() & x'0000ff00'::int) >> 8;
+    SELECT cttoolno INTO tool2 FROM cats._cylinder2tool WHERE ctcyl = (theId                   & x'0000ff00'::int) >> 8;
+
+    IF tool1 != tool2 THEN
+      PERFORM cats.get( xx, yy, zz, esttime);
+      SELECT cats.put_bcrd( theId, xx, yy, zz, esttime) INTO rtn;
+    ELSE
+      SELECT cats._mkcryocmd( 'getput_bcrd', theId, 0, xx, yy, zz, esttime) INTO rtn;
+    END IF;
+    return rtn;
+  END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+ALTER FUNCTION cats.getput( int, int, int, int, numeric) OWNER TO lsadmin;
 
 --------
 
@@ -1692,3 +1735,68 @@ CREATE OR REPLACE FUNCTION cats.recover_dismount_failure() returns boolean AS $$
   END;
 $$ LANGUAGE PLPGSQL SECURITY DEFINER;
 ALTER FUNCTION cats.recover_dismount_failure() OWNER TO lsadmin;
+
+
+CREATE TABLE cats._cmdTiming (
+       ctkey serial primary key,
+       ctstn bigint references px.stations (stnkey),
+       ctpath text NOT NULL,
+       ctool int  NOT NULL,
+       ctstart timestamp with time zone default now(),		-- time command was sent to robot
+       ctneedair timestamp with time zone default null,		-- time we needed air rights
+       ctgotair  timestamp with time zone default null,		-- time we got air rights
+       ctnoair   timestamp with time zone default null,		-- time we no longer needed air rights
+       ctdone    timestamp with time zone default null		-- time we became done
+);
+ALTER TABLE cats._cmdTiming OWNER TO lsadmin;
+
+CREATE OR REPLACE FUNCTION cats.cmdTimingStart( thePath text, theTool int) returns void as $$
+  DECLARE
+  BEGIN
+    DELETE FROM cats._cmdTiming WHERE ctpath=thePath and cttool=theTool and ctdone is null;
+    INSERT INTO	cats._cmdTiming (ctstn, ctpath, cttool) values (px.getstation(), thePath, theTool);
+  END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+ALTER FUNCTION cats.cmdTimingStart( text, int) OWNER TO lsadmin;
+
+CREATE OR REPLACE FUNCTION cats.cmdTimingNeedAir() returns void as $$
+  DECLARE
+    theCpKey bigint;
+  BEGIN
+    SELECT cpkey INTO theCpKey FROM cats._cmdTiming WHERE ctstn=px.getStation() and ctdone is null
+    UPDATE cats._cmdTiming SET ctneedair=now() WHERE ctkey = (SELECT ctkey FROM cats._cmdTiming WHERE ctstn=px.getStation() ORDER BY ctkey desc LIMIT 1);
+  END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+ALTER FUNCTION cats.cmdTimingNeedAir() OWNER TO lsadmin;
+
+CREATE OR REPLACE FUNCTION cats.cmdTimingGotAir() returns void as $$
+  DECLARE
+  BEGIN
+    UPDATE cats._cmdTiming SET ctgotair=now() WHERE ctkey = (SELECT ctkey FROM cats._cmdTiming WHERE ctstn=px.getStation() ORDER BY ctkey desc LIMIT 1);
+  END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+ALTER FUNCTION cats.cmdTimingGotAir() OWNER TO lsadmin;
+
+CREATE OR REPLACE FUNCTION cats.cmdTimingNoAir() returns void as $$
+  DECLARE
+  BEGIN
+    UPDATE cats._cmdTiming SET ctnoair=now() WHERE ctkey = (SELECT ctkey FROM cats._cmdTiming WHERE ctstn=px.getStation() ORDER BY ctkey desc LIMIT 1);
+  END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+ALTER FUNCTION cats.cmdTimingNoAir() OWNER TO lsadmin;
+
+CREATE OR REPLACE FUNCTION cats.cmdTimingDone() returns void as $$
+  DECLARE
+  BEGIN
+    UPDATE cats._cmdTiming SET ctdone=now() WHERE ctkey = (SELECT ctkey FROM cats._cmdTiming WHERE ctstn=px.getStation() and ctdone is null ORDER BY ctkey desc LIMIT 1);
+  END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+ALTER FUNCTION cats.cmdTimingDone() OWNER TO lsadmin;
+
+CREATE OR REPLACE FUNCTION cats.cmdTimingAbort() returns void as $$
+  DECLARE
+  BEGIN
+    DELETE FROM cats._cmdTiming WHERE ctstn=px.station() and ctdone is null;
+  END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+ALTER FUNCTION cats.cmdTimingAbort() OWNER TO lsadmin;

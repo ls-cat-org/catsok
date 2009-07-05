@@ -144,7 +144,7 @@ class CatsOk:
                         #   This is a long winded explaination.  This allows us to send vdiXX commands while a path is running while queuing up the next getput/get/put
                         #   vid90 = airrights, so we really need to be able to do this.
                         #
-    cmdQueue = []       # queue of commands received from postgresql: tuple (cmd,startTime)
+    cmdQueue = []       # queue of commands received from postgresql: tuple (cmd,startTime,path,tool)
     afterCmd    = []    # queue of commands to run after the current one is done
     statusQueue = []    # queue of status requests to send to cats server
     statusFailedPushCount = 0
@@ -183,13 +183,13 @@ class CatsOk:
             return 1
         return 0
 
-    def pushCmd( self, cmd, startTime=datetime.datetime.now()):
+    def pushCmd( self, cmd, startTime=datetime.datetime.now(), path=None, tool=None):
         print "pushing command '%s'" % (cmd)
         if cmd == 'abort' or cmd == 'panic':
             self.cmdQueue = []
             self.afterCmd = []
             startTime = datetime.datetime.now()
-        self.cmdQueue.append( (cmd,startTime))
+        self.cmdQueue.append( (cmd, startTime, path, tool))
         self.cmdQueue.sort( self.compareCmdQueue)
         self.p.register( self.t1, select.POLLIN | select.POLLPRI | select.POLLOUT)
 
@@ -198,6 +198,8 @@ class CatsOk:
         rtn = None
         if len( self.cmdQueue) > 0:
             if self.cmdQueue[0][1] <= datetime.datetime.now():
+                qs = 'select cats.cmdTimingStart( "%s", %d)' % (cmdQueue[0][2], cmdQueue[0][3])
+                self.db.query( qs)
                 rtn = self.cmdQueue.pop(0)[0]
         else:
             self.p.register( self.t1, select.POLLIN | select.POLLPRI)
@@ -223,10 +225,12 @@ class CatsOk:
             #
             self.dbFlag = True
             while( self.dbFlag):
-                qr = self.db.query( "select cmd, startEpoch as se from cats._popqueue()")
+                qr = self.db.query( "select cmd, startEpoch as se, pqpath, pqtool from cats._popqueue()")
                 r = qr.dictresult()[0]
                 if len( r["cmd"]) > 0:
                     cmd = r["cmd"]
+                    path = r["pqpath"]
+                    tool = r["pqtool"]
                     startTime = datetime.datetime.fromtimestamp(r["se"])
                     print r["se"], startTime
                     d = startTime - datetime.datetime.now()
@@ -234,7 +238,7 @@ class CatsOk:
                 else:
                     if self.workingPath == "" and len(self.afterCmd) > 0:
                         print "Queuing Command: ", self.afterCmd[0][0]
-                        self.pushCmd( self.afterCmd[0][0], self.afterCmd[0][1])
+                        self.pushCmd( self.afterCmd[0][0], self.afterCmd[0][1], self.afterCmd[0][2], self.afterCmd[0][3])
                         self.workingPath = self.afterCmd[0][0]
                         self.afterCmd.pop(0)
                     self.dbFlag = False
@@ -247,25 +251,24 @@ class CatsOk:
                     try:
                         # Pick off the path name and test it against those needing air rights:
                         #  We'll need a second list of commands to test if we ever want to call one that does not need air rights
-                        trialPath = cmd[0:cmd.find("(")]
-                        ndx = self.pathsNeedingAirRights.index( trialPath)
+                        ndx = self.pathsNeedingAirRights.index( path)
                     except ValueError:
                         #
                         # No path found: just push the command and hope for the best
-                        self.pushCmd( cmd, startTime)
+                        self.pushCmd( cmd, startTime, path, tool)
                         self.workingPath = cmd
                     else:
                         #
                         # We found one: save it for later if we are busy now
                         #
                         if self.workingPath != "":
-                            self.afterCmd.append((cmd, startTime))
+                            self.afterCmd.append((cmd, startTime, path, tool))
                             print "Saving Command: ", cmd
                         else:
-                            self.pushCmd( cmd, startTime)
+                            self.pushCmd( cmd, startTime, path, tool)
                             self.workingPath = cmd
                 else:
-                    self.pushCmd( cmd, startTime)
+                    self.pushCmd( cmd, startTime, path, tool)
                     self.workingPath = cmd
         return True
 
@@ -488,9 +491,9 @@ class CatsOk:
         # One line command to an argument list
         a = s[s.find("(")+1 : s.find(")")].split(',')
 
-        if len(a) != 15 and len(a) != 16:
+        if len(a) != 16:
             print s
-            raise CatsOkError( 'Wrong number of arguments received in status state response: got %d, exptected 15 or 16' % (len(a)))
+            raise CatsOkError( 'Wrong number of arguments received in status state response: got %d, exptected 16' % (len(a)))
         #                            0            1            2             3           4          5   6   7   8   9  10   11         12           13           14
 
         if self.statusStateLast == None or self.statusStateLast != s:
@@ -543,9 +546,15 @@ class CatsOk:
             elif not self.robotOn:
                 self.pushCmd( "on")
 
-        # Nab air rights when we embark on a path requiring them
+
         pathName = a[4]
         self.workingPath = pathName
+
+        # mark the end of a path
+        if len(self.lastPathName)>0 and self.lastPathName != pathname:
+            self.db.query( "select cats.cmdTimingDone()")
+
+        # Nab air rights when we embark on a path requiring them
         if self.lastPathName != pathName and not self.haveAirRights:
             try:
                 ndx = self.pathsNeedingAirRights.index(pathName)
@@ -581,7 +590,7 @@ class CatsOk:
             #
             if ms == "t" and (self.sampleMounted["lid"] == "" or self.sampleMounted["sample"] == ""):
                 print "Sample on diffractometer but robot thinks there isn't: aborting"
-                self.pushCmd( "abort")
+                self.pushCmd( "panic")
                 if not self.inRecoveryMode:
                     self.inRecoveryMode = True
                     # self.db.query( "select cats.recover_dismount_failure()")
@@ -600,11 +609,18 @@ class CatsOk:
             qs = "select cats.setdo( b'%s')" % (do)
             self.db.query( qs)
 
-        # give up air rights on falling edge of Pr2
+        # Calculate Pr2 (robot air rights request)
         lastPr2 = self.Pr2
         self.Pr2 = do[5] == "1"
+
+        # robot needs airrights on rising edge of Pr2
+        if not lastPr2 and self.Pr2:
+            self.db.query( "select cats.cmdTimingNeedAir()")
+
+        # robot no longer needs airrights on falling edge of Pr2
         if lastPr2 and not self.Pr2:
             self.needAirRights = False
+            self.db.query( "select cats.cmdTimingNoAir()")
 
 
     def statusDiParse( self, s):
