@@ -1055,7 +1055,7 @@ CREATE OR REPLACE FUNCTION cats._pushqueue( cmd text, startTime timestamp with t
       IF startTime is null THEN
         INSERT INTO cats._queue (qcmd, qaddr, qpath, qtool) VALUES (c, theRobot, thePath, theTool);
       ELSE
-        INSERT INTO cats._queue (qcmd, qaddr, qStart) VALUES (c, theRobot, startTime, thePath, theTool);
+        INSERT INTO cats._queue (qcmd, qaddr, qStart, qpath, qtool) VALUES (c, theRobot, startTime, thePath, theTool);
       END IF;
 
 

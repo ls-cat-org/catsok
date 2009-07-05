@@ -200,7 +200,7 @@ class CatsOk:
             if self.cmdQueue[0][1] <= datetime.datetime.now():
                 if self.cmdQueue[0][2] != None:
                     tool = int(self.cmdQueue[0][3])
-                    qs = 'select cats.cmdTimingStart( "%s", %d)' % (self.cmdQueue[0][2], tool)
+                    qs = "select cats.cmdTimingStart( '%s', %d)" % (self.cmdQueue[0][2], tool)
                     self.db.query( qs)
                 rtn = self.cmdQueue.pop(0)[0]
         else:
@@ -553,7 +553,7 @@ class CatsOk:
         self.workingPath = pathName
 
         # mark the end of a path
-        if len(self.lastPathName)>0 and self.lastPathName != pathname:
+        if len(self.lastPathName)>0 and self.lastPathName != pathName:
             self.db.query( "select cats.cmdTimingDone()")
 
         # Nab air rights when we embark on a path requiring them
