@@ -198,9 +198,10 @@ class CatsOk:
         rtn = None
         if len( self.cmdQueue) > 0:
             if self.cmdQueue[0][1] <= datetime.datetime.now():
-                tool = int(self.cmdQueue[0][3])
-                qs = 'select cats.cmdTimingStart( "%s", %d)' % (self.cmdQueue[0][2], tool)
-                self.db.query( qs)
+                if self.cmdQueue[0][2] != None:
+                    tool = int(self.cmdQueue[0][3])
+                    qs = 'select cats.cmdTimingStart( "%s", %d)' % (self.cmdQueue[0][2], tool)
+                    self.db.query( qs)
                 rtn = self.cmdQueue.pop(0)[0]
         else:
             self.p.register( self.t1, select.POLLIN | select.POLLPRI)
