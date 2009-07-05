@@ -198,7 +198,8 @@ class CatsOk:
         rtn = None
         if len( self.cmdQueue) > 0:
             if self.cmdQueue[0][1] <= datetime.datetime.now():
-                qs = 'select cats.cmdTimingStart( "%s", %d)' % (self.cmdQueue[0][2], self.cmdQueue[0][3])
+                tool = int(self.cmdQueue[0][3])
+                qs = 'select cats.cmdTimingStart( "%s", %d)' % (self.cmdQueue[0][2], tool)
                 self.db.query( qs)
                 rtn = self.cmdQueue.pop(0)[0]
         else:
