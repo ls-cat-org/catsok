@@ -623,6 +623,7 @@ class CatsOk:
         if not lastPr2 and self.Pr2:
             print "Robot needs air rights now"
             if self.cryoLocked:
+                print "Unlocking Cryo..."
                 self.db.query( "select px.unlockCryo()")
                 self.cryoLocked = False
             self.db.query( "select cats.cmdTimingNeedAir()")
@@ -633,6 +634,7 @@ class CatsOk:
             self.needAirRights = False
             self.db.query( "select cats.cmdTimingNoAir()")
             if not self.cryoLocked:
+                print "Locking Cryo..."
                 self.db.query( "select px.lockCryo()")
                 self.cryoLocked = True
 
