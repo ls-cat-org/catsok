@@ -1110,7 +1110,8 @@ CREATE OR REPLACE FUNCTION cats.init() RETURNS VOID AS $$
     IF FOUND THEN
        EXECUTE 'LISTEN ' || ntfy;
     END IF;
-  END;
+    PERFORM px.lockcryo();
+ END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 ALTER FUNCTION cats.init() OWNER TO lsadmin;
 
@@ -1411,7 +1412,7 @@ CREATE OR REPLACE FUNCTION cats.curpathInsertTF() returns trigger AS $$
    cp record;
    doneTime timestamp with time zone;
   BEGIN
-    SELECT NEW.cpts + ttdone INTO doneTime FROM cats._tooltiming WHERE NEW.cptool=tttool and NEW.cppath=ttpath and NEW.cpstn=ttstn;
+    SELECT NEW.cpts + ttnoair INTO doneTime FROM cats._tooltiming WHERE NEW.cptool=tttool and NEW.cppath=ttpath and NEW.cpstn=ttstn;
     IF FOUND THEN
         NEW.cpdoneTime := doneTime;
     END IF;
@@ -1753,8 +1754,8 @@ ALTER TABLE cats._cmdTiming OWNER TO lsadmin;
 CREATE OR REPLACE FUNCTION cats.cmdTimingStart( thePath text, theTool int) returns void as $$
   DECLARE
   BEGIN
-    DELETE FROM cats._cmdTiming WHERE ctpath=thePath and cttool=theTool and ctdone is null;
-    INSERT INTO	cats._cmdTiming (ctstn, ctpath, cttool) values (px.getstation(), thePath, theTool);
+    DELETE FROM cats._cmdTiming WHERE ctpath=thePath and ctool=theTool and ctdone is null;
+    INSERT INTO	cats._cmdTiming (ctstn, ctpath, ctool) values (px.getstation(), thePath, theTool);
   END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 ALTER FUNCTION cats.cmdTimingStart( text, int) OWNER TO lsadmin;
@@ -1763,8 +1764,9 @@ CREATE OR REPLACE FUNCTION cats.cmdTimingNeedAir() returns void as $$
   DECLARE
     theCpKey bigint;
   BEGIN
-    SELECT cpkey INTO theCpKey FROM cats._cmdTiming WHERE ctstn=px.getStation() and ctdone is null
+    SELECT cpkey INTO theCpKey FROM cats._cmdTiming WHERE ctstn=px.getStation() and ctdone is null;
     UPDATE cats._cmdTiming SET ctneedair=now() WHERE ctkey = (SELECT ctkey FROM cats._cmdTiming WHERE ctstn=px.getStation() ORDER BY ctkey desc LIMIT 1);
+    PERFORM px.unlockcryo();
   END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 ALTER FUNCTION cats.cmdTimingNeedAir() OWNER TO lsadmin;
@@ -1781,14 +1783,37 @@ CREATE OR REPLACE FUNCTION cats.cmdTimingNoAir() returns void as $$
   DECLARE
   BEGIN
     UPDATE cats._cmdTiming SET ctnoair=now() WHERE ctkey = (SELECT ctkey FROM cats._cmdTiming WHERE ctstn=px.getStation() ORDER BY ctkey desc LIMIT 1);
+    PERFORM px.lockcryo();
   END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 ALTER FUNCTION cats.cmdTimingNoAir() OWNER TO lsadmin;
 
 CREATE OR REPLACE FUNCTION cats.cmdTimingDone() returns void as $$
   DECLARE
+    donetime interval;
+    airtime  interval;
+    noairtime interval;
+    thePath text;
+    theTool int;
+    theKey  bigInt;
   BEGIN
-    UPDATE cats._cmdTiming SET ctdone=now() WHERE ctkey = (SELECT ctkey FROM cats._cmdTiming WHERE ctstn=px.getStation() and ctdone is null ORDER BY ctkey desc LIMIT 1);
+    SELECT ctkey, ctool, ctpath INTO theKey, theTool, thePath FROM cats._cmdTiming WHERE ctstn=px.getStation() and ctdone is null ORDER BY ctkey desc LIMIT 1;
+    IF NOT FOUND or theTool is null or thePath is null THEN
+      return;
+    END IF;
+    UPDATE cats._cmdTiming SET ctdone=now() WHERE ctkey = theKey;
+    SELECT avg(ctneedair-ctstart), avg(ctnoair-ctstart), avg(ctdone-ctstart) INTO airtime, noairtime, donetime
+        FROM cats._cmdTiming
+        WHERE ctkey IN (SELECT ctkey FROM cats._cmdTiming  WHERE ctstn=px.getStation() and ctool=theTool and ctpath=thePath and ctdone is not null ORDER BY ctkey DESC LIMIT 10);
+
+    IF airtime is not null and noairtime is not null and donetime is not null THEN
+      PERFORM 1 FROM cats._tooltiming WHERE tttool=theTool and ttpath=thePath and ttstn=px.getStation();
+      IF FOUND THEN
+        UPDATE cats._tooltiming SET ttair=airtime, ttnoair=noairtime, ttdone=donetime WHERE tttool=theTool and ttpath=thePath and ttstn=px.getStation();
+      ELSE
+        INSERT INTO cats._tooltiming (ttair, ttnoair, ttdone, ttstn, tttool, ttpath) VALUES (airtime, noairtime, donetime, px.getStation(), theTool, thePath);
+      END IF;
+    END IF;
   END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 ALTER FUNCTION cats.cmdTimingDone() OWNER TO lsadmin;

@@ -617,10 +617,12 @@ class CatsOk:
 
         # robot needs airrights on rising edge of Pr2
         if not lastPr2 and self.Pr2:
+            print "Robot needs air rights now"
             self.db.query( "select cats.cmdTimingNeedAir()")
 
         # robot no longer needs airrights on falling edge of Pr2
         if lastPr2 and not self.Pr2:
+            print "Robot no longer needs air rights"
             self.needAirRights = False
             self.db.query( "select cats.cmdTimingNoAir()")
 
