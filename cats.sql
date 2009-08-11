@@ -1762,9 +1762,7 @@ ALTER FUNCTION cats.cmdTimingStart( text, int) OWNER TO lsadmin;
 
 CREATE OR REPLACE FUNCTION cats.cmdTimingNeedAir() returns void as $$
   DECLARE
-    theCpKey bigint;
   BEGIN
-    SELECT cpkey INTO theCpKey FROM cats._cmdTiming WHERE ctstn=px.getStation() and ctdone is null;
     UPDATE cats._cmdTiming SET ctneedair=now() WHERE ctkey = (SELECT ctkey FROM cats._cmdTiming WHERE ctstn=px.getStation() ORDER BY ctkey desc LIMIT 1);
     PERFORM px.unlockcryo();
   END;
