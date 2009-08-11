@@ -93,7 +93,7 @@ class CatsOk:
 
     dbFlag       = True        # indicates a command might still be in the queue
     lastPathName  = ""
-    cryoLocked = False
+    cryoLocked = None
     needAirRights = False
     haveAirRights = False
     dpX = None
@@ -433,6 +433,9 @@ class CatsOk:
             "config"     : { "period" : 86400, "last" : None, "rqstCnt" : 0, "rcvdCnt" : 0},
             "message"   : { "period" : 0.65,   "last" : None, "rqstCnt" : 0, "rcvdCnt" : 0}
             }
+
+        self.db.query( "select px.lockCryo()")
+        self.cryoLocked = True
 
     def close( self):
         if self.t1 != None:
