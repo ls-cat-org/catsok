@@ -93,6 +93,7 @@ class CatsOk:
 
     dbFlag       = True        # indicates a command might still be in the queue
     lastPathName  = ""
+    cryoLocked = False
     needAirRights = False
     haveAirRights = False
     dpX = None
@@ -618,7 +619,9 @@ class CatsOk:
         # robot needs airrights on rising edge of Pr2
         if not lastPr2 and self.Pr2:
             print "Robot needs air rights now"
-            self.db.query( "select px.cyrounlock()")
+            if self.cryoLocked:
+                self.db.query( "select px.unlockCryo()")
+                self.cryoLocked = False
             self.db.query( "select cats.cmdTimingNeedAir()")
 
         # robot no longer needs airrights on falling edge of Pr2
@@ -626,7 +629,9 @@ class CatsOk:
             print "Robot no longer needs air rights"
             self.needAirRights = False
             self.db.query( "select cats.cmdTimingNoAir()")
-            self.db.query( "select px.cyrolock()")
+            if not self.cryoLocked:
+                self.db.query( "select px.lockCryo()")
+                self.cryoLocked = True
 
 
     def statusDiParse( self, s):

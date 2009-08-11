@@ -1110,7 +1110,6 @@ CREATE OR REPLACE FUNCTION cats.init() RETURNS VOID AS $$
     IF FOUND THEN
        EXECUTE 'LISTEN ' || ntfy;
     END IF;
-    PERFORM px.lockcryo();
  END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 ALTER FUNCTION cats.init() OWNER TO lsadmin;
@@ -1764,7 +1763,6 @@ CREATE OR REPLACE FUNCTION cats.cmdTimingNeedAir() returns void as $$
   DECLARE
   BEGIN
     UPDATE cats._cmdTiming SET ctneedair=now() WHERE ctkey = (SELECT ctkey FROM cats._cmdTiming WHERE ctstn=px.getStation() ORDER BY ctkey desc LIMIT 1);
-    PERFORM px.unlockcryo();
   END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 ALTER FUNCTION cats.cmdTimingNeedAir() OWNER TO lsadmin;
@@ -1781,7 +1779,6 @@ CREATE OR REPLACE FUNCTION cats.cmdTimingNoAir() returns void as $$
   DECLARE
   BEGIN
     UPDATE cats._cmdTiming SET ctnoair=now() WHERE ctkey = (SELECT ctkey FROM cats._cmdTiming WHERE ctstn=px.getStation() ORDER BY ctkey desc LIMIT 1);
-    PERFORM px.lockcryo();
   END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 ALTER FUNCTION cats.cmdTimingNoAir() OWNER TO lsadmin;
