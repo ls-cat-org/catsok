@@ -1104,7 +1104,6 @@ CREATE OR REPLACE FUNCTION cats.init() RETURNS VOID AS $$
   DECLARE
     ntfy text;
   BEGIN
-    PERFORM pg_advisory_lock( px.getstation(), 6);
     DELETE FROM cats._queue WHERE qaddr = inet_client_addr();    
     SELECT cnotifyrobot INTO ntfy FROM px._config WHERE cstnkey=px.getstation();
     IF FOUND THEN
