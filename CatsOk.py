@@ -81,10 +81,13 @@ class CatsOk:
     """
     Monitors status of the cats robot, updates database, and controls CatsOk lock
     """
+    oldStr = None       # used to keep from spamming console
+    oldSendCmd = None
+    oldPushCmd = None
     inRecoveryMode = False
     workingPath = ""    # path we are currently running
     pathsNeedingAirRights = [
-        "put", "put_bcrd", "get", "getput", "getput_bcrd"
+        "put", "put_bcrd", "get", "getput", "getput_bcrd", "test"
         ]
 
     sampleMounted = { "lid" : None, "sample" : None, "timestamp" : None}
@@ -185,7 +188,9 @@ class CatsOk:
         return 0
 
     def pushCmd( self, cmd, startTime=datetime.datetime.now(), path=None, tool=None):
-        print "pushing command '%s'" % (cmd)
+        if self.oldPushCmd == None or self.oldPushCmd != cmd:
+            print "pushing command '%s'" % (cmd)
+            self.oldPushCmd = cmd
         if cmd == 'abort' or cmd == 'panic':
             self.cmdQueue = []
             self.afterCmd = []
@@ -282,7 +287,9 @@ class CatsOk:
         if event & select.POLLOUT:
             cmd = self.nextCmd()
             if cmd != None:
-                print "sending command '%s'" % (cmd)
+                if self.oldSendCmd == None or self.oldSendCmd != cmd:
+                    print "sending command '%s'" % (cmd)
+                    self.oldSendCmd = cmd
                 self.t1.send( cmd + self.termstr)
 
         if event & (select.POLLIN | select.POLLPRI):
@@ -291,14 +298,17 @@ class CatsOk:
                 self.p.unregister( self.t1.fileno())
                 return False
 
-            print "Received:", newStr
-            str = self.t1Input + newStr
-            pList = str.replace('\n','\r').split( self.termstr)
-            if len( str) > 0 and str[-2:-1] != self.termstr:
-                self.t1Input = pList.pop( -1)
+            if self.oldStr == None or newStr != self.oldStr:
+                print "Received:", newStr
+                str = self.t1Input + newStr
+                pList = str.replace('\n','\r').split( self.termstr)
+                if len( str) > 0 and str[-2:-1] != self.termstr:
+                    self.t1Input = pList.pop( -1)
         
-            for s in pList:
-                print s
+                for s in pList:
+                    print s
+                self.oldStr = newStr
+
         return True
 
     #
