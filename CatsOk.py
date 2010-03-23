@@ -368,7 +368,7 @@ class CatsOk:
 
         return True
 
-    def __init__( self):
+    def __init__( self, stn=None):
         # See if we are on a path that requires air rights
 
         #
@@ -377,8 +377,15 @@ class CatsOk:
 
         #
         # establish connections to CATS sockets
-        qr = self.db.query("select px.getcatsaddr() as a")
+        if stn != None:
+            qs = "select coalesce(px.getcatsaddr( stn='%s')::text,'Not Found') as a" % stn
+        else:
+            qs = "select coalesce(px.getcatsaddr()::text,'Not Found') as a"
+        qr = self.db.query(qs)
+        
         catsaddr = qr.dictresult()[0]["a"]
+        if catsaddr == "Not Found":
+            raise CatsOkError( "Robot's address not found.  Sorry.")
 
         self.t1 = socket.socket( socket.AF_INET, socket.SOCK_STREAM)
         try:

@@ -361,6 +361,68 @@ CREATE OR REPLACE FUNCTION cats.getrobotstate() returns cats.getrobotstatetype A
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 ALTER FUNCTION cats.getrobotstate() OWNER TO lsadmin;
 
+CREATE OR REPLACE FUNCTION cats.getrobotstate( theStn bigint) returns cats.getrobotstatetype AS $$
+  DECLARE
+    rtn cats.getrobotstatetype;
+    sti bit(99);
+    sto bit(55);
+  BEGIN
+    SELECT dii INTO sti FROM cats.di WHERE distn = theStn ORDER BY dikey desc LIMIT 1;
+    IF FOUND THEN
+      rtn.lid1     := (b'1'::bit(99) >> 21) & sti != 0::bit(99);
+      rtn.lid2     := (b'1'::bit(99) >> 22) & sti != 0::bit(99);
+      rtn.lid3     := (b'1'::bit(99) >> 23) & sti != 0::bit(99);
+      rtn.toolopen := (b'1'::bit(99) >> 24) & sti != 0::bit(99);
+    END IF;
+    SELECT doo INTO sto FROM cats.do WHERE dostn = theStn ORDER BY dokey desc LIMIT 1;
+    IF FOUND THEN
+      rtn.magon := (b'1'::bit(55) >> 4) & sto != 0::bit(55);
+    END IF;
+    SELECT cspower, csln2reg, cspathname INTO rtn.power, rtn.regon, rtn.path FROM cats.states WHERE csstn=theStn ORDER BY cskey desc limit 1;
+    SELECT cats.fractiondone() INTO rtn.progress;
+    return rtn;
+  END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+ALTER FUNCTION cats.getrobotstate( bigint) OWNER TO lsadmin;
+
+
+--CREATE TYPE cats.getrobotstatetype AS ( power boolean, lid1 boolean, lid2 boolean, lid3 boolean, regon boolean, magon boolean, toolopen boolean, path text, progress float);
+CREATE OR REPLACE FUNCTION cats.getrobotstatexml( theStn bigint) returns xml AS $$
+  DECLARE
+    rtn xml;
+    tmp cats.getrobotstatetype;
+    msg text;
+    sid int;
+    puckState int;
+    ms  boolean;
+  BEGIN
+
+    SELECT ((((b'111111111'::bit(99)>>12) & dii)<<12) & b'111111111'::bit(99))::bit(9)::int INTO puckState FROM cats.di WHERE distn=theStn;
+
+    SELECT px.kvget( theStn, 'SamplePresent') = 'True' INTO ms;
+
+    SELECT etverbose INTO msg FROM px.nexterrors( theStn) WHERE etid>=30000 and etid<40000 ORDER BY etkey DESC LIMIT 1;
+    IF NOT FOUND THEN
+      msg := '';
+    END IF;
+
+    SELECT px.getcurrentsampleid(theStn::int) into sid;
+    IF NOT FOUND THEN
+      sid := 0;
+    END IF;
+
+    SELECT * INTO tmp FROM cats.getrobotstate( theStn);
+    rtn := xmlelement( name "statusReport",
+                       xmlelement(name "robotStatus",
+                                   xmlattributes( 'true' as success, theStn as stn, tmp.power as power, tmp.lid1 as lid1, tmp.lid2 as lid2, tmp.lid3 as lid3,
+                                                   tmp.regon as regon, tmp.magon as magon, tmp.toolopen as toolopen, tmp.path as path, tmp.progress::text as progress,
+                                                   msg as status, sid as currentsample, ms as mounted, puckState::text as pucks)));
+
+    return rtn;
+  END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+ALTER FUNCTION cats.getrobotstatexml( bigint) OWNER TO lsadmin;
+
 
 CREATE TABLE cats.o2error (
 --
@@ -1031,14 +1093,19 @@ CREATE OR REPLACE FUNCTION cats._pushqueue( cmd text) RETURNS VOID AS $$
 $$ LANGUAGE SQL SECURITY DEFINER;
 ALTER FUNCTION cats._pushqueue( text) OWNER TO lsadmin;
 
+CREATE OR REPLACE FUNCTION cats._pushqueue( theStn bigint, cmd text) RETURNS VOID AS $$
+  SELECT cats._pushqueue( $1, $2, now(), NULL, NULL);
+$$ LANGUAGE SQL SECURITY DEFINER;
+ALTER FUNCTION cats._pushqueue( text) OWNER TO lsadmin;
 
-CREATE OR REPLACE FUNCTION cats._pushqueue( cmd text, startTime timestamp with time zone, thePath text, theTool int) RETURNS VOID AS $$
+
+CREATE OR REPLACE FUNCTION cats._pushqueue( theStn bigint, cmd text, startTime timestamp with time zone, thePath text, theTool int) RETURNS VOID AS $$
   DECLARE
     c text;	    -- trimmed command
     ntfy text;	    -- used to generate notify command
     theRobot inet;  -- address of CatsOk routine
   BEGIN
-    SELECT cnotifyrobot, crobot INTO ntfy, theRobot FROM px._config LEFT JOIN px.stations ON cstation=stnname WHERE stnkey=px.getstation();
+    SELECT cnotifyrobot, crobot INTO ntfy, theRobot FROM px._config LEFT JOIN px.stations ON cstation=stnname WHERE stnkey=theStn;
     IF NOT FOUND THEN
       RETURN;
     END IF;
@@ -1247,6 +1314,12 @@ $$ LANGUAGE SQL SECURITY DEFINER;
 ALTER FUNCTION cats._mkcryocmd( text, int, int, int, int, int) OWNER TO lsadmin;
 
 
+CREATE OR REPLACE FUNCTION cats._mkcryocmd( theStn bigint, theCmd text, theId int, theNewId int, xx int, yy int, zz int) RETURNS INT AS $$
+  SELECT cats._mkcryocmd( $1, $2, $3, $4, $5, $6, $7, 0.0::numeric);
+$$ LANGUAGE SQL SECURITY DEFINER;
+ALTER FUNCTION cats._mkcryocmd( bigint, text, int, int, int, int, int) OWNER TO lsadmin;
+
+
 
 
 CREATE OR REPLACE FUNCTION cats._mkcryocmd( theCmd text, theId int, theNewId int, xx int, yy int, zz int, esttime numeric) RETURNS INT AS $$
@@ -1394,6 +1467,152 @@ CREATE OR REPLACE FUNCTION cats._mkcryocmd( theCmd text, theId int, theNewId int
   END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 ALTER FUNCTION cats._mkcryocmd( text, int, int, int, int, int, numeric) OWNER TO lsadmin;
+
+CREATE OR REPLACE FUNCTION cats._mkcryocmd( theStn bigint, theCmd text, theId int, theNewId int, xx int, yy int, zz int, esttime numeric) RETURNS INT AS $$
+  --
+  -- All the cryocrystallography commands have very similar requirements
+  -- This is a low level function to service the put, get, (and getput), as well as the brcd flavors
+  -- Also, the barcode, transfer, soak, dry, home, safe, and reference commands are supported here
+  --
+  -- esttime is the number of seconds before we'll likely be able to get the air rights
+  -- used to calculate the time parameter for the command
+  --
+  DECLARE
+    rtn int;	-- return: 1 on success, 0 on failure
+
+    ison boolean;  -- true when the robot is "on"
+	--
+	-- Convert theId so something the robot can use
+    cstn1 int;	-- control system's station number
+    cdwr1 int;	-- control system's dewar number
+    ccyl1 int;	-- control system's cylinder number
+    csmp1 int;	-- control system's sample number
+    rlid1 int;	-- robot's lid number
+    rtool1 int;	-- robot's tool number
+    rsmpl1 int;	-- robot's sample number
+
+    cstn2 int;	-- control system's station number
+    cdwr2 int;	-- control system's dewar number
+    ccyl2 int;	-- control system's cylinder number
+    csmp2 int;	-- control system's sample number
+    rlid2 int;	-- robot's lid number
+    rtool2 int;	-- robot's tool number
+    rsmpl2 int;	-- robot's sample number
+
+    startTime timestamp with time zone;
+    tc record;  -- tool correction: a kludge to finetune the diffractometer position
+
+  BEGIN
+    rtn := 0;
+
+    SELECT cspower INTO ison FROM cats.states WHERE csstn=theStn ORDER BY csKey DESC LIMIT 1;
+    IF FOUND and not ison THEN
+      PERFORM cats._pushqueue( theStn, 'on');
+    END IF;    
+
+    INSERT INTO cats._args (aCmd) VALUES ( theCmd);
+
+    --
+    -- theId is zero for an "get".  Here we need to get the tool number from the current state
+    --
+    IF theId = 0 THEN
+      SELECT cttoolno INTO rtool1 FROM cats.states LEFT JOIN cats._cylinder2tool ON ctToolName=csToolNumber WHERE csstn=theStn ORDER BY csKey desc LIMIT 1;
+      IF FOUND THEN
+        UPDATE cats._args SET aCap=rtool1 WHERE aKey=currval('cats._args_akey_seq');
+      END IF;
+    END IF;
+
+    IF theId != 0 THEN
+      --
+      -- Pick out the control system's numbers
+      -- home, safe, get, soak, and dry need at least an ID corresponding to a cylinder to choose the right tool
+      --
+      cstn1 := (theId & x'ff000000'::int) >> 24;
+      cdwr1 := (theId & x'00ff0000'::int) >> 16;
+      ccyl1 := (theId & x'0000ff00'::int) >>  8;
+      csmp1 :=  theId & x'000000ff'::int;
+      --
+      -- Find the Robot's numbers
+      --
+      -- 1 = current tool, 2 = diffractometer, 3-5 = lids
+      -- For now only allow references to lid positions in the CATS dewar
+      IF cdwr1 < 3 or cdwr1 > 5 THEN
+        return 0;
+      END IF;
+      rlid1 := cdwr1 - 2;
+
+      SELECT cttoolno, (ccyl1-ctoff)*ctnsamps + csmp1 INTO rtool1, rsmpl1 FROM cats._cylinder2tool WHERE ctcyl=ccyl1;
+      IF NOT FOUND THEN
+        return 0;
+      END IF;
+      -- Now we know what we want
+      UPDATE cats._args SET aCap=rtool1, aLid=rlid1, aSample=rsmpl1 WHERE akey=currval('cats._args_akey_seq');
+    END IF;
+
+    IF theId != 0 and theNewId != 0 THEN
+      --
+      -- Pick out the control system's numbers
+      --
+      cstn2 := (theNewId & x'ff000000'::int) >> 24;
+      cdwr2 := (theNewId & x'00ff0000'::int) >> 16;
+      ccyl2 := (theNewId & x'0000ff00'::int) >>  8;
+      csmp2 :=  theNewId & x'000000ff'::int;
+      --
+      -- Find the Robot's numbers
+      --
+      -- 1 = current tool, 2 = diffractometer, 3-5 = lids
+      -- For now only allow reference to position in the CATS dewar
+      IF cdwr2 < 3 or cdwr2 > 5 THEN
+        return 0;
+      END IF;
+      rlid2 := cdwr2 - 2;
+
+      SELECT cttoolno, (ccyl2-ctoff)*ctnsamps + csmp2 INTO rtool2, rsmpl2 FROM cats._cylinder2tool WHERE ctcyl=ccyl2;
+      IF NOT FOUND OR rtool1 != rtool2 THEN
+        return 0;
+      END IF;
+      -- Now we know what we want
+      UPDATE cats._args SET aNewLid=rlid2, aNewSample=rsmpl2 WHERE akey=currval('cats._args_akey_seq');
+    END IF;
+
+
+    --
+    -- Get the diffractometer correction
+    --
+    SELECT * INTO tc FROM cats._toolCorrection WHERE tcstn=theStn and tcTool = rtool1 ORDER BY tcKey DESC LIMIT 1;
+    IF FOUND THEN
+    -- set the diffractometer correction additionally corrected
+      UPDATE cats._args SET aXShift = xx + tc.tcx, aYShift = yy + tc.tcy, aZShift = zz + tc.tcz WHERE aKey=currval('cats._args_akey_seq');
+    ELSE
+    -- set the diffractometer correction not additionally corrected
+      UPDATE cats._args SET aXShift = xx, aYShift = yy, aZShift = zz WHERE aKey=currval('cats._args_akey_seq');
+    END IF;
+
+    --
+    -- get a start time based on esttime parameter
+    -- The esttime is the approximate time that the diffractometer will give up the air rights
+    -- We'll plan to delay our start so that we first request air rights just after the diffractometer gives them up
+    --
+    SELECT CASE WHEN extract( epoch from ttair) < esttime
+                THEN to_timestamp( extract( epoch from now()) + esttime - extract( epoch from ttair))
+                ELSE now() END
+                INTO startTime
+                FROM cats._tooltiming
+                WHERE ttstn=theStn and tttool=rtool1;
+    IF NOT FOUND THEN
+      -- No timing available: just start right away
+      startTime := now();
+    END IF;
+
+    -- add path to the queue
+    PERFORM cats._pushqueue( theStn, cats._gencmd( currval( 'cats._args_akey_seq')), startTime, theCmd, rtool1);
+
+    -- update our current path for printing out busy bar
+    INSERT INTO cats.curpath (cpts,cptool, cpstn, cppath) VALUES( startTime, rtool1, theStn,  theCmd);
+    return 1;
+  END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+ALTER FUNCTION cats._mkcryocmd( bigint, text, int, int, int, int, int, numeric) OWNER TO lsadmin;
 
 CREATE TABLE cats.curpath(
   cpkey serial primary key,   -- our key
@@ -1691,6 +1910,179 @@ $$ LANGUAGE SQL SECURITY DEFINER;
 ALTER FUNCTION cats.restart() OWNER TO lsadmin;
 
 
+-------------------------
+--
+-- Explicit station
+--
+-------------------------
+
+CREATE OR REPLACE FUNCTION cats.barcode( theStn bigint, theId int) returns int AS $$
+  SELECT cats._mkcryocmd( $1, 'barcode', $2, 0, 0, 0, 0);
+$$ LANGUAGE sql SECURITY DEFINER;
+ALTER FUNCTION cats.barcode( bigint, int) OWNER TO lsadmin;
+
+CREATE OR REPLACE FUNCTION cats.transfer( theStn bigint, theId int, theNewId int) returns int AS $$
+  SELECT cats._mkcryocmd( $1, 'transfer', $2, $3, 0, 0, 0);
+$$ LANGUAGE sql SECURITY DEFINER;
+ALTER FUNCTION cats.transfer( bigint, int, int) OWNER TO lsadmin;
+
+CREATE OR REPLACE FUNCTION cats.soak( theStn bigint, theId int) returns int AS $$
+  SELECT cats._mkcryocmd( $1, 'soak', $2, 0, 0, 0, 0);
+$$ LANGUAGE sql SECURITY DEFINER;
+ALTER FUNCTION cats.soak( bigint, int) OWNER TO lsadmin;
+
+CREATE OR REPLACE FUNCTION cats.dry( theStn bigint, theId int) returns int AS $$
+  SELECT cats._mkcryocmd( $1, 'dry', $2, 0, 0, 0, 0);
+$$ LANGUAGE sql SECURITY DEFINER;
+ALTER FUNCTION cats.dry( bigint, int) OWNER TO lsadmin;
+
+CREATE OR REPLACE FUNCTION cats.home( theStn bigint, theId int) returns int AS $$
+  SELECT cats._mkcryocmd( $1, 'home', $2, 0, 0, 0, 0);
+$$ LANGUAGE sql SECURITY DEFINER;
+ALTER FUNCTION cats.home( bigint, int) OWNER TO lsadmin;
+
+CREATE OR REPLACE FUNCTION cats.back( theStn bigint, theId int) returns int AS $$
+  SELECT cats._mkcryocmd( $1, 'back', $2, 0, 0, 0, 0);
+$$ LANGUAGE sql SECURITY DEFINER;
+ALTER FUNCTION cats.back( bigint, int) OWNER TO lsadmin;
+
+CREATE OR REPLACE FUNCTION cats.safe( theStn bigint, theId int) returns int AS $$
+  SELECT cats._mkcryocmd( $1, 'safe', $2, 0, 0, 0, 0);
+$$ LANGUAGE sql SECURITY DEFINER;
+ALTER FUNCTION cats.safe( bigint, int) OWNER TO lsadmin;
+
+CREATE OR REPLACE FUNCTION cats.reference( theStn bigint) returns int AS $$
+  SELECT cats._mkcryocmd( $1, 'reference', 0, 0, 0, 0, 0);
+$$ LANGUAGE sql SECURITY DEFINER;
+ALTER FUNCTION cats.reference( bigint) OWNER TO lsadmin;
+
+CREATE OR REPLACE FUNCTION cats.openlid1( theStn bigint) returns void AS $$
+  SELECT cats._pushqueue( $1, 'openlid1');
+$$ LANGUAGE SQL SECURITY DEFINER;
+ALTER FUNCTION cats.openlid1( bigint) OWNER TO lsadmin;
+  
+CREATE OR REPLACE FUNCTION cats.openlid2( theStn bigint) returns void AS $$
+  SELECT cats._pushqueue( $1, 'openlid2');
+$$ LANGUAGE SQL SECURITY DEFINER;
+ALTER FUNCTION cats.openlid2( bigint) OWNER TO lsadmin;
+  
+
+CREATE OR REPLACE FUNCTION cats.openlid3( theStn bigint) returns void AS $$
+  SELECT cats._pushqueue( $1, 'openlid3');
+$$ LANGUAGE SQL SECURITY DEFINER;
+ALTER FUNCTION cats.openlid3( bigint) OWNER TO lsadmin;
+  
+CREATE OR REPLACE FUNCTION cats.closelid1( theStn bigint) returns void AS $$
+  SELECT cats._pushqueue( $1, 'closelid1');
+$$ LANGUAGE SQL SECURITY DEFINER;
+ALTER FUNCTION cats.closelid1( bigint) OWNER TO lsadmin;
+  
+CREATE OR REPLACE FUNCTION cats.closelid2( theStn bigint) returns void AS $$
+  SELECT cats._pushqueue( $1, 'closelid2');
+$$ LANGUAGE SQL SECURITY DEFINER;
+ALTER FUNCTION cats.closelid2( bigint) OWNER TO lsadmin;
+  
+
+CREATE OR REPLACE FUNCTION cats.closelid3( theStn bigint) returns void AS $$
+  SELECT cats._pushqueue( $1, 'closelid3');
+$$ LANGUAGE SQL SECURITY DEFINER;
+ALTER FUNCTION cats.closelid3( bigint) OWNER TO lsadmin;
+
+---
+
+
+
+CREATE OR REPLACE FUNCTION cats.opentool( theStn bigint) returns void AS $$
+  SELECT cats._pushqueue( $1, 'opentool');
+$$ LANGUAGE SQL SECURITY DEFINER;
+ALTER FUNCTION cats.opentool( bigint) OWNER TO lsadmin;
+
+CREATE OR REPLACE FUNCTION cats.closetool( theStn bigint) returns void AS $$
+  SELECT cats._pushqueue( $1, 'closetool');
+$$ LANGUAGE SQL SECURITY DEFINER;
+ALTER FUNCTION cats.closetool( bigint) OWNER TO lsadmin;
+
+CREATE OR REPLACE FUNCTION cats.magneton( theStn bigint) returns void AS $$
+  SELECT cats._pushqueue( $1, 'magneton');
+$$ LANGUAGE SQL SECURITY DEFINER;
+ALTER FUNCTION cats.magneton( bigint) OWNER TO lsadmin;
+
+CREATE OR REPLACE FUNCTION cats.magnetoff( theStn bigint) returns void AS $$
+  SELECT cats._pushqueue( $1, 'magnetoff');
+$$ LANGUAGE SQL SECURITY DEFINER;
+ALTER FUNCTION cats.magnetoff( bigint) OWNER TO lsadmin;
+
+CREATE OR REPLACE FUNCTION cats.heateron( theStn bigint) returns void AS $$
+  SELECT cats._pushqueue( $1, 'heateron');
+$$ LANGUAGE SQL SECURITY DEFINER;
+ALTER FUNCTION cats.heateron( bigint) OWNER TO lsadmin;
+
+CREATE OR REPLACE FUNCTION cats.heateroff( theStn bigint) returns void AS $$
+  SELECT cats._pushqueue( $1, 'heateroff');
+$$ LANGUAGE SQL SECURITY DEFINER;
+ALTER FUNCTION cats.heateroff( bigint) OWNER TO lsadmin;
+
+CREATE OR REPLACE FUNCTION cats.regulon( theStn bigint) returns void AS $$
+  SELECT cats._pushqueue( $1, 'regulon');
+$$ LANGUAGE SQL SECURITY DEFINER;
+ALTER FUNCTION cats.regulon( bigint) OWNER TO lsadmin;
+
+CREATE OR REPLACE FUNCTION cats.reguloff( theStn bigint) returns void AS $$
+  SELECT cats._pushqueue( $1, 'reguloff');
+$$ LANGUAGE SQL SECURITY DEFINER;
+ALTER FUNCTION cats.reguloff( bigint) OWNER TO lsadmin;
+
+
+CREATE OR REPLACE FUNCTION cats.warmon( theStn bigint) returns void AS $$
+  SELECT cats._pushqueue( $1, 'warmon');
+$$ LANGUAGE SQL SECURITY DEFINER;
+ALTER FUNCTION cats.warmon( bigint) OWNER TO lsadmin;
+
+CREATE OR REPLACE FUNCTION cats.warmoff( theStn bigint) returns void AS $$
+  SELECT cats._pushqueue( $1, 'warmoff');
+$$ LANGUAGE SQL SECURITY DEFINER;
+ALTER FUNCTION cats.warmoff( bigint) OWNER TO lsadmin;
+
+
+CREATE OR REPLACE FUNCTION cats.on( theStn bigint) returns void AS $$
+  SELECT cats._pushqueue( $1, 'on');
+$$ LANGUAGE SQL SECURITY DEFINER;
+ALTER FUNCTION cats.on( bigint) OWNER TO lsadmin;
+
+CREATE OR REPLACE FUNCTION cats.off( theStn bigint) returns void AS $$
+  SELECT cats._pushqueue( $1, 'off');
+$$ LANGUAGE SQL SECURITY DEFINER;
+ALTER FUNCTION cats.off( bigint) OWNER TO lsadmin;
+
+CREATE OR REPLACE FUNCTION cats.abort( theStn bigint) returns void AS $$
+  SELECT cats._pushqueue( $1, 'abort');
+$$ LANGUAGE SQL SECURITY DEFINER;
+ALTER FUNCTION cats.abort( bigint) OWNER TO lsadmin;
+
+CREATE OR REPLACE FUNCTION cats.reset( theStn bigint) returns void AS $$
+  SELECT cats._pushqueue( $1, 'reset');
+$$ LANGUAGE SQL SECURITY DEFINER;
+ALTER FUNCTION cats.reset( bigint) OWNER TO lsadmin;
+
+
+CREATE OR REPLACE FUNCTION cats.panic( theStn bigint) returns void AS $$
+  SELECT cats._pushqueue( $1, 'panic');
+$$ LANGUAGE SQL SECURITY DEFINER;
+ALTER FUNCTION cats.panic( bigint) OWNER TO lsadmin;
+
+CREATE OR REPLACE FUNCTION cats.pause( theStn bigint) returns void AS $$
+  SELECT cats._pushqueue( $1, 'pause');
+$$ LANGUAGE SQL SECURITY DEFINER;
+ALTER FUNCTION cats.pause( bigint) OWNER TO lsadmin;
+
+CREATE OR REPLACE FUNCTION cats.restart( theStn bigint) returns void AS $$
+  SELECT cats._pushqueue( $1, 'restart');
+$$ LANGUAGE SQL SECURITY DEFINER;
+ALTER FUNCTION cats.restart( bigint) OWNER TO lsadmin;
+
+
+------------------------------------------------
+
 CREATE TABLE cats.magnetstates (
        msKey serial primary key,
        msTS timestamp with time zone default now(),
@@ -1698,6 +2090,7 @@ CREATE TABLE cats.magnetstates (
        msSamplePresent boolean not null
 );
 ALTER TABLE cats.magnetstates OWNER to lsadmin;
+
 
 CREATE OR REPLACE FUNCTION cats.recover_SPINE_dismount_failure() returns boolean AS $$
   DECLARE
@@ -1819,3 +2212,40 @@ CREATE OR REPLACE FUNCTION cats.cmdTimingAbort() returns void as $$
   END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 ALTER FUNCTION cats.cmdTimingAbort() OWNER TO lsadmin;
+
+
+CREATE TYPE cats.machineStateType as ( "Station" int, "State" int);
+
+CREATE OR REPLACE FUNCTION cats.machineState() returns setof cats.machineStateType AS $$
+  --
+  -- Must be owned by a privileged user
+  DECLARE
+    rtn cats.machineStateType;
+    tPath int;
+    tDAR  int;
+    tmp   int;
+    cid   int;
+  BEGIN
+    
+
+    FOR cid,tPath,tDAR,tmp IN SELECT  classid,
+          (bool_or(coalesce(length(cspathname),0)>0))::int * 128,
+          (bool_or(coalesce(cdiffractometer=client_addr and objid=2,false)))::int * 64,
+          bit_or((2^(objid::int-1))::int)
+        FROM pg_locks
+        LEFT JOIN pg_stat_activity ON procpid=pid
+        LEFT JOIN px._config ON cstnkey=classid
+        LEFT JOIN cats.states on classid=csstn
+        WHERE locktype='advisory' and granted and classid < 5 and classid > 0
+        GROUP BY classid
+        ORDER BY classid
+      LOOP
+      rtn."Station" = cid;
+      rtn."State"   = tmp + tDAR + tPath;
+      return next rtn;
+    END LOOP;
+    return;
+  END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+ALTER FUNCTION cats.machineState() OWNER TO brister;
+
