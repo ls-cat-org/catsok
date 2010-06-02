@@ -1,0 +1,2 @@
+shell /bin/bash
+screen -t CatsOk 0 /usr/local/bin/CatsOk.py

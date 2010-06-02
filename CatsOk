@@ -1,0 +1,4 @@
+#! /bin/bash
+
+screen -DRR -s /bin/bash -c /usr/local/bin/CatsOkScreenrc
+
