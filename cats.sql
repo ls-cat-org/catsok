@@ -379,7 +379,7 @@ CREATE OR REPLACE FUNCTION cats.getrobotstate( theStn bigint) returns cats.getro
       rtn.magon := (b'1'::bit(55) >> 4) & sto != 0::bit(55);
     END IF;
     SELECT cspower, csln2reg, cspathname INTO rtn.power, rtn.regon, rtn.path FROM cats.states WHERE csstn=theStn ORDER BY cskey desc limit 1;
-    SELECT cats.fractiondone() INTO rtn.progress;
+    SELECT cats.fractiondone( theStn) INTO rtn.progress;
     return rtn;
   END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
@@ -387,6 +387,19 @@ ALTER FUNCTION cats.getrobotstate( bigint) OWNER TO lsadmin;
 
 
 --CREATE TYPE cats.getrobotstatetype AS ( power boolean, lid1 boolean, lid2 boolean, lid3 boolean, regon boolean, magon boolean, toolopen boolean, path text, progress float);
+CREATE OR REPLACE FUNCTION cats.getrobotstatexml( thePid text, theStn bigint) returns xml AS $$
+  DECLARE
+    rtn xml;
+  BEGIN
+    PERFORM 1 WHERE rmt.checkstnaccess( theStn, thePid);
+    IF FOUND THEN
+      SELECT cats.getrobotstatexml( theStn) INTO rtn;
+    END IF;
+    return rtn;
+  END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+ALTER FUNCTION cats.getrobotstatexml( text, bigint) OWNER TO lsadmin;
+
 CREATE OR REPLACE FUNCTION cats.getrobotstatexml( theStn bigint) returns xml AS $$
   DECLARE
     rtn xml;
@@ -422,6 +435,55 @@ CREATE OR REPLACE FUNCTION cats.getrobotstatexml( theStn bigint) returns xml AS 
   END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 ALTER FUNCTION cats.getrobotstatexml( bigint) OWNER TO lsadmin;
+
+
+CREATE OR REPLACE FUNCTION cats.getrobotstatekvpxml( theStn bigint) returns xml AS $$
+  DECLARE
+    rtn xml;
+    tmp cats.getrobotstatetype;
+    msg text;
+    sid int;
+    puckState int;
+    ms  boolean;
+  BEGIN
+
+    SELECT ((((b'111111111'::bit(99)>>12) & dii)<<12) & b'111111111'::bit(99))::bit(9)::int INTO puckState FROM cats.di WHERE distn=theStn;
+
+    SELECT px.kvget( theStn, 'SamplePresent') = 'True' INTO ms;
+
+    SELECT etverbose INTO msg FROM px.nexterrors( theStn) WHERE etid>=30000 and etid<40000 ORDER BY etkey DESC LIMIT 1;
+    IF NOT FOUND THEN
+      msg := '';
+    END IF;
+
+    SELECT px.getcurrentsampleid(theStn::int) into sid;
+    IF NOT FOUND THEN
+      sid := 0;
+    END IF;
+
+    SELECT * INTO tmp FROM cats.getrobotstate( theStn);
+    
+    rtn := xmlelement( name "robotStatus", xmlelement( name kvpair, xmlattributes( 'success'  as name, 'true'    as value)),
+                                           xmlelement( name kvpair, xmlattributes( 'stn'      as name, theStn    as value)),
+                                           xmlelement( name kvpair, xmlattributes( 'lid1'     as name, tmp.lid1  as value)),
+                                           xmlelement( name kvpair, xmlattributes( 'lid2'     as name, tmp.lid2  as value)),
+                                           xmlelement( name kvpair, xmlattributes( 'lid3'     as name, tmp.lid3  as value)),
+                                           xmlelement( name kvpair, xmlattributes( 'regon'    as name, tmp.regon as value)),
+                                           xmlelement( name kvpair, xmlattributes( 'magon'    as name, tmp.magon as value)),
+                                           xmlelement( name kvpair, xmlattributes( 'toolopen' as name, tmp.toolopen as value)),
+                                           xmlelement( name kvpair, xmlattributes( 'path'     as name, coalesce(tmp.path,'')  as value)),
+                                           xmlelement( name kvpair, xmlattributes( 'progress' as name, tmp.progress::text as value)),
+                                           xmlelement( name kvpair, xmlattributes( 'status'   as name, msg       as value)),
+                                           xmlelement( name kvpair, xmlattributes( 'currentsample' as name, sid  as value)),
+                                           xmlelement( name kvpair, xmlattributes( 'mounted'  as name, ms        as value)),
+                                           xmlelement( name kvpair, xmlattributes( 'pucks'    as name, puckState::text as value)));
+
+
+                      
+    return rtn;
+  END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+ALTER FUNCTION cats.getrobotstatekvpxml( bigint) OWNER TO lsadmin;
 
 
 CREATE TABLE cats.o2error (
@@ -1656,6 +1718,23 @@ CREATE OR REPLACE FUNCTION cats.fractionDone() returns float as $$
   END
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 ALTER FUNCTION cats.fractionDone() OWNER TO lsadmin;
+
+CREATE OR REPLACE FUNCTION cats.fractionDone( theStn bigint) returns float as $$
+  DECLARE
+    rtn float;
+    cp record;
+  BEGIN
+    SELECT extract( epoch from (now() - cpts))/(0.1+abs(extract( epoch from (cpdonetime-cpts)))) INTO rtn FROM cats.curpath WHERE cpstn=theStn ORDER BY cpkey desc LIMIT 1;
+    IF NOT FOUND OR rtn > 1.0 THEN
+      rtn := 1.0;
+    END IF;
+    IF rtn < 0.0 THEN
+      rtn := 0.0;
+    END IF;
+    RETURN rtn;
+  END
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+ALTER FUNCTION cats.fractionDone( bigint) OWNER TO lsadmin;
 
 -------------
 CREATE OR REPLACE FUNCTION cats.put( theId int, x int, y int, z int) returns int AS $$
