@@ -2300,6 +2300,7 @@ CREATE OR REPLACE FUNCTION cats.machineState() returns setof cats.machineStateTy
   -- Must be owned by a privileged user
   DECLARE
     rtn cats.machineStateType;
+    tSamp int;
     tPath int;
     tDAR  int;
     tmp   int;
@@ -2320,7 +2321,9 @@ CREATE OR REPLACE FUNCTION cats.machineState() returns setof cats.machineStateTy
         ORDER BY classid
       LOOP
       rtn."Station" = cid;
-      rtn."State"   = tmp + tDAR + tPath;
+      SELECT CASE WHEN px.getcurrentsampleid(cid)=px.lastsample(cid) THEN 256 ELSE 0 END INTO tSamp;
+
+      rtn."State"   = tmp + tSamp + tDAR + tPath;
       return next rtn;
     END LOOP;
     return;
