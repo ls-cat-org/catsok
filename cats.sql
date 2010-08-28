@@ -1050,7 +1050,7 @@ CREATE OR REPLACE FUNCTION cats.positionsInsertTF() returns trigger as $$
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 ALTER FUNCTION cats.positionsInsertTF() OWNER TO lsadmin;
 
-CREATE TRIGGER positionsInsertTrigger BEFORE INSERT ON cats.positions FOR EACH ROW EXECUTE PROCEDURE cats.positionsInsertTF();
+#CREATE TRIGGER positionsInsertTrigger BEFORE INSERT ON cats.positions FOR EACH ROW EXECUTE PROCEDURE cats.positionsInsertTF();
 
 CREATE OR REPLACE FUNCTION cats.setposition( x numeric(20,6), y numeric(20,6), z numeric(20,6), rx numeric(20,6), ry numeric(20,6), rz numeric(20,6)) returns int as $$
   BEGIN
@@ -1090,6 +1090,11 @@ CREATE OR REPLACE FUNCTION cats.tooclose() returns boolean as $$
   SELECT ((pX-dpX)*(pX-dpX)+(pY-dpY)*(py-dpY)+(pZ-dpZ)*(pZ-dpZ)) < 9.0E4 FROM cats.positions left join cats.diffPos on dpStn=pStn WHERE dpStn=px.getStation() order by pkey desc, dpkey desc limit 1;
 $$ LANGUAGE SQL SECURITY DEFINER;
 ALTER FUNCTION cats.tooclose() OWNER TO lsadmin;
+
+CREATE OR REPLACE FUNCTION cats.tooclose( theStn bigint) returns boolean as $$
+  SELECT ((pX-dpX)*(pX-dpX)+(pY-dpY)*(py-dpY)+(pZ-dpZ)*(pZ-dpZ)) < 9.0E4 FROM cats.positions left join cats.diffPos on dpStn=pStn order by pkey desc limit 1;
+$$ LANGUAGE SQL SECURITY DEFINER;
+ALTER FUNCTION cats.tooclose(bigint) OWNER TO lsadmin;
 
 
 CREATE TABLE cats.messages (
@@ -2300,6 +2305,7 @@ CREATE OR REPLACE FUNCTION cats.machineState() returns setof cats.machineStateTy
   -- Must be owned by a privileged user
   DECLARE
     rtn cats.machineStateType;
+    tExcl int;
     tSamp int;
     tPath int;
     tDAR  int;
@@ -2321,13 +2327,48 @@ CREATE OR REPLACE FUNCTION cats.machineState() returns setof cats.machineStateTy
         ORDER BY classid
       LOOP
       rtn."Station" = cid;
+      SELECT CASE WHEN cats.tooclose(cid) THEN 512 ELSE 0 END INTO tExcl;
+
       SELECT CASE WHEN px.getcurrentsampleid(cid)=px.lastsample(cid) THEN 256 ELSE 0 END INTO tSamp;
 
-      rtn."State"   = tmp + tSamp + tDAR + tPath;
+      rtn."State"   = tmp + tExcl + tSamp + tDAR + tPath;
       return next rtn;
     END LOOP;
     return;
   END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 ALTER FUNCTION cats.machineState() OWNER TO brister;
+
+CREATE OR REPLACE FUNCTION cats.machineState( theStn bigint) returns int AS $$
+  --
+  -- Must be owned by a privileged user
+  DECLARE
+    rtn   int;
+    tExcl int;
+    tSamp int;
+    tPath int;
+    tDAR  int;
+    tmp   int;
+  BEGIN
+    
+
+   SELECT INTO tPath, tDAR, tmp
+        (bool_or(coalesce(length(cspathname),0)>0))::int * 128,
+        (bool_or(coalesce(cdiffractometer=client_addr and objid=2,false)))::int * 64,
+        bit_or((2^(objid::int-1))::int)
+      FROM pg_locks
+      LEFT JOIN pg_stat_activity ON procpid=pid
+      LEFT JOIN px._config ON cstnkey=theStn
+      LEFT JOIN cats.states on csstn=theStn
+      WHERE locktype='advisory' and granted;
+
+    SELECT CASE WHEN cats.tooclose(theStn) THEN 512 ELSE 0 END INTO tExcl;
+
+    SELECT CASE WHEN px.getcurrentsampleid(theStn)=px.lastsample(theStn) THEN 256 ELSE 0 END INTO tSamp;
+
+    rtn = tmp + tExcl + tSamp + tDAR + tPath;
+    return rtn;
+  END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+ALTER FUNCTION cats.machineState( bigint) OWNER TO brister;
 
