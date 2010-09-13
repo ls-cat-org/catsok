@@ -677,8 +677,8 @@ class CatsOk:
         if len(a) != 6:
             raise CatsOkError( 'Wrong number of arguments received in status state response: got %d, exptected 14' % (len(a)))
         #                               0   1   2   3   4  5
-        #qs = "select cats.setposition( %s, %s, %s, %s, %s, %s)" %  ( a[0], a[1], a[2], a[3], a[4], a[5])
-        #self.db.query( qs)
+        qs = "select cats.setposition( %s, %s, %s, %s, %s, %s)" %  ( a[0], a[1], a[2], a[3], a[4], a[5])
+        self.db.query( qs)
         self.statusPositionLast = s
         # print a[0],a[1],a[2],a[3],a[4],a[5]
 
