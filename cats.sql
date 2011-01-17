@@ -79,7 +79,7 @@ CREATE TRIGGER statesInsertTrigger BEFORE INSERT ON cats.states FOR EACH ROW EXE
 drop function cats.setstate(boolean,boolean,boolean,text,text,int,int,int,int,int,int,text,boolean,boolean,boolean);
 
 CREATE OR REPLACE FUNCTION cats.setstate (
-                                          state(0,1,2,3,4,5,6,7,’¡Ä,19)
+--                                          state(0,1,2,3,4,5,6,7,’¡Ä,19)
 --state ask for the sample changer status -
 --                                          0 = power (1 or 0)
 --                                          1 = auto mode status (1 or 0)
@@ -128,10 +128,10 @@ DECLARE
 BEGIN
   INSERT INTO cats.states ( csStn, csPower, csAutoMode, csDefaultStatus, csToolNumber, csPathName,
               csLidNumberOnTool, csSampleNumberOnTool, csLidNumberMounted, csSampleNumberMounted, csPlateNumber,
-              csWellNumber, csBarcode, csPathRunning, csLN2Reg, csLN2Warming, csToolSpeed)
+              csWellNumber, csBarcode, csPathRunning, csLN2Reg, csLN2Warming, csToolSpeed, csPuckDetect1, csPuckDetect2, csPosNum1, csPosNum2)
        VALUES (  px.getStation(), power, autoMode, defaultStatus, toolNumber,  pathName,
                  lidNumberOnTool, sampleNumberOnTool, lidNumberMounted, sampleNumberMounted, plateNumber,
-                 wellNumber, barcode, pathRunning, LN2Reg, LN2Warming, toolSpeed);
+                 wellNumber, barcode, pathRunning, LN2Reg, LN2Warming, toolSpeed, puckDetect1, puckDetect2, posNum1, posNum2);
 
 
   IF FOUND then
@@ -2401,7 +2401,7 @@ CREATE OR REPLACE FUNCTION cats.machineState( theStn bigint) returns int AS $$
       LEFT JOIN pg_stat_activity ON procpid=pid
       LEFT JOIN px._config ON cstnkey=theStn
       LEFT JOIN cats.states on csstn=theStn
-      WHERE locktype='advisory' and granted;
+      WHERE locktype='advisory' and objid < 32 and granted;
 
     SELECT CASE WHEN cats.tooclose(theStn) THEN 512 ELSE 0 END INTO tExcl;
 
@@ -2412,4 +2412,3 @@ CREATE OR REPLACE FUNCTION cats.machineState( theStn bigint) returns int AS $$
   END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 ALTER FUNCTION cats.machineState( bigint) OWNER TO brister;
-
