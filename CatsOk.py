@@ -547,8 +547,9 @@ class CatsOk:
         if self.statusStateLast == None or self.statusStateLast != s:
             b = []
             i = 0
-            #             0           1           2         3       4         5      6       7       8        9     10        11        12          13         14           15
-            aType = ["::boolean","::boolean","::boolean","::text","::text","::int","::int","::int","::int","::int","::int","::text","::boolean","::boolean","::boolean","::float"]
+            #          power       auto stat    default    tool    path     lid#    sam#   mlid#    msam#    plt#   well#   barcode   running     reg1 (1)    reg2 (2)     speed    detc1     detc2  pos#1     pos#2
+            #             0           1           2         3       4         5      6       7       8        9     10        11        12          13         14           15        16       17      18       19
+            aType = ["::boolean","::boolean","::boolean","::text","::text","::int","::int","::int","::int","::int","::int","::text","::boolean","::boolean","::boolean","::float", "::int", "::int", "::int", "::int"]
             qs = "select cats.setstate( "
 
             needComma = False
@@ -684,7 +685,7 @@ class CatsOk:
     def statusDiParse( self, s):
         self.srqst["di"]["rcvdCnt"] = self.srqst["di"]["rcvdCnt"] + 1
         di = s[s.find("(")+1:s.find(")")]
-
+        # 111100010000000000000000011000000001110000000000000000000000000000000000000000000101101110000000000
         qs = "select cats.setdi( b'%s')" % (di)
         self.db.query( qs)
 
