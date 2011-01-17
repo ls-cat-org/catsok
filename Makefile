@@ -1,4 +1,4 @@
-VERSION= 1.01
+VERSION= 1.2
 
 install:
 	install --mode=755 CatsOk.py /usr/local/bin
