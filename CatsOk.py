@@ -515,7 +515,6 @@ class CatsOk:
         a = s[s.find("(")+1 : s.find(")")].split(',')
 
         #
-        #                                          state(0,1,2,3,4,5,6,7,’¡Ä,19)
         # state ask for the sample changer status -
         #                                          0 = power (1 or 0)
         #                                          1 = auto mode status (1 or 0)
