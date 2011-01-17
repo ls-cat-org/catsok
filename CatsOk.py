@@ -514,15 +514,40 @@ class CatsOk:
         # One line command to an argument list
         a = s[s.find("(")+1 : s.find(")")].split(',')
 
-        if len(a) != 16:
+        #
+        #                                          state(0,1,2,3,4,5,6,7,’¡Ä,19)
+        # state ask for the sample changer status -
+        #                                          0 = power (1 or 0)
+        #                                          1 = auto mode status (1 or 0)
+        #                                          2 = default status (1 or 0)
+        #                                          3 = tool number or name
+        #                                          4 = path name
+        #                                          5 = lid number of sample mounted on tool
+        #                                          6 = number of the sample on tool
+        #                                          7 = lid number of sample mounted on diffractometer
+        #                                          8 = number of sample mounted on diffractometer
+        #                                          9 = number of plate in tool
+        #                                          10 = well number
+        #                                          11 = barcode number
+        #                                          12 = path running (1 or 0)
+        #                                          13 = LN2 regulation running Dewar#1(1 or 0)
+        #                                          14 = LN2 regulation running Dewar #2(1 or 0)
+        #                                          15 = robot speed ratio (%)
+        #                                          16 = puck detection result on Dewar#1
+        #                                          17 = puck detection result on Dewar#2
+        #                                          18 = position number in Dewar#1
+        #                                          19 = position number in Dewar#2
+
+
+        if len(a) != 20:
             print s
-            raise CatsOkError( 'Wrong number of arguments received in status state response: got %d, exptected 16' % (len(a)))
+            raise CatsOkError( 'Wrong number of arguments received in status state response: got %d, exptected 20' % (len(a)))
         #                            0            1            2             3           4          5   6   7   8   9  10   11         12           13           14
 
         if self.statusStateLast == None or self.statusStateLast != s:
             b = []
             i = 0
-            #             0           1           2         3       4         5      6       7       8        9     10        11        12          13         14
+            #             0           1           2         3       4         5      6       7       8        9     10        11        12          13         14           15
             aType = ["::boolean","::boolean","::boolean","::text","::text","::int","::int","::int","::int","::int","::int","::text","::boolean","::boolean","::boolean","::float"]
             qs = "select cats.setstate( "
 

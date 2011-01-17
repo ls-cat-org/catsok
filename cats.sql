@@ -25,9 +25,13 @@ CREATE TABLE cats.states (
        csWellNumber integer,
        csBarcode text,
        csPathRunning boolean,
-       csLN2Reg boolean,
-       csLN2Warming boolean,
-       csToolSpeed float
+       csLN2Reg1 boolean,
+       csLN2Reg2 boolean,
+       csToolSpeed float,
+       csPuckDetect1 integer,
+       csPuckDetect2 integer,
+       csPosNum1 integer,
+       csPosNum2 integer,
 );
 ALTER TABLE cats.states OWNER TO lsadmin;
 
@@ -51,9 +55,14 @@ CREATE OR REPLACE FUNCTION cats.statesInsertTF() returns trigger as $$
         t.csWellNumber = NEW.csWellNumber AND
         t.csBarcode = NEW.csBarcode AND
         t.csPathRunning = NEW.csPathRunning AND
-        t.csLN2Reg = NEW.csLN2Reg AND
-        t.csLN2Warming = NEW.csLN2Warming AND
-        t.csToolSpeed  = NEW.csToolSpeed
+        t.csLN2Reg1 = NEW.csLN2Reg1 AND
+        t.csLN2Reg2 = NEW.csLN2Reg2 AND
+        t.csToolSpeed  = NEW.csToolSpeed AND
+	t.csPuckDetect1 = NEW.csPuckDetect1 AND
+	t.csPuckDetect2 = NEW.csPuckDetect2 AND
+	t.csPosNum1 = NEW.csPosNum1 AND
+	t.csPosNum2 = NEW.csPosNum2
+
       THEN
         UPDATE cats.states SET csTSLast = now() WHERE csKey = t.csKey;
         RETURN NULL;
@@ -70,6 +79,30 @@ CREATE TRIGGER statesInsertTrigger BEFORE INSERT ON cats.states FOR EACH ROW EXE
 drop function cats.setstate(boolean,boolean,boolean,text,text,int,int,int,int,int,int,text,boolean,boolean,boolean);
 
 CREATE OR REPLACE FUNCTION cats.setstate (
+                                          state(0,1,2,3,4,5,6,7,’¡Ä,19)
+--state ask for the sample changer status -
+--                                          0 = power (1 or 0)
+--                                          1 = auto mode status (1 or 0)
+--                                          2 = default status (1 or 0)
+--                                          3 = tool number or name
+--                                          4 = path name
+--                                          5 = lid number of sample mounted on tool
+--                                          6 = number of the sample on tool
+--                                          7 = lid number of sample mounted on diffractometer
+--                                          8 = number of sample mounted on diffractometer
+--                                          9 = number of plate in tool
+--                                          10 = well number
+--                                          11 = barcode number
+--                                          12 = path running (1 or 0)
+--                                          13 = LN2 regulation running Dewar#1(1 or 0)
+--                                          14 = LN2 regulation running Dewar #2(1 or 0)
+--                                          15 = robot speed ratio (%)
+--                                          16 = puck detection result on Dewar#1
+--                                          17 = puck detection result on Dewar#2
+--                                          18 = position number in Dewar#1
+--                                          19 = position number in Dewar#2
+
+
        power boolean,			--  0
        autoMode boolean,		--  1
        defaultStatus boolean,		--  2
@@ -83,9 +116,13 @@ CREATE OR REPLACE FUNCTION cats.setstate (
        wellNumber integer,		-- 10
        barcode text,			-- 11
        pathRunning boolean,		-- 12
-       LN2Reg boolean,			-- 13
-       LN2Warming boolean,		-- 14
-       toolSpeed float			-- 15
+       LN2Reg1 boolean,			-- 13
+       LN2Reg2 boolean,			-- 14
+       toolSpeed float,			-- 15
+       puckDetect1 integer,		-- 16
+       puckDetect2 integer,		-- 17
+       posNum1 integer,			-- 18
+       posNum2 integer			-- 19
 ) returns int as $$
 DECLARE
 BEGIN
@@ -122,9 +159,13 @@ ALTER FUNCTION cats.setstate (
        wellNumber integer,		-- 10
        barcode text,			-- 11
        pathRunning boolean,		-- 12
-       LN2Reg boolean,			-- 13
-       LN2Warming boolean,		-- 14
-       toolspeed float			-- 15
+       LN2Reg1 boolean,			-- 13
+       LN2Reg2 boolean,			-- 14
+       toolSpeed float,			-- 15
+       puckDetect1 integer,		-- 16
+       puckDetect2 integer,		-- 17
+       posNum1 integer,			-- 18
+       posNum2 integer			-- 19
 ) OWNER TO lsadmin;
 
 
