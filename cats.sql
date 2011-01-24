@@ -128,10 +128,10 @@ DECLARE
 BEGIN
   INSERT INTO cats.states ( csStn, csPower, csAutoMode, csDefaultStatus, csToolNumber, csPathName,
               csLidNumberOnTool, csSampleNumberOnTool, csLidNumberMounted, csSampleNumberMounted, csPlateNumber,
-              csWellNumber, csBarcode, csPathRunning, csLN2Reg, csLN2Warming, csToolSpeed, csPuckDetect1, csPuckDetect2, csPosNum1, csPosNum2)
+              csWellNumber, csBarcode, csPathRunning, csLN2Reg1, csLN2Reg2, csToolSpeed, csPuckDetect1, csPuckDetect2, csPosNum1, csPosNum2)
        VALUES (  px.getStation(), power, autoMode, defaultStatus, toolNumber,  pathName,
                  lidNumberOnTool, sampleNumberOnTool, lidNumberMounted, sampleNumberMounted, plateNumber,
-                 wellNumber, barcode, pathRunning, LN2Reg, LN2Warming, toolSpeed, puckDetect1, puckDetect2, posNum1, posNum2);
+                 wellNumber, barcode, pathRunning, LN2Reg1, LN2Reg2, toolSpeed, puckDetect1, puckDetect2, posNum1, posNum2);
 
 
   IF FOUND then
@@ -395,7 +395,7 @@ CREATE OR REPLACE FUNCTION cats.getrobotstate() returns cats.getrobotstatetype A
     IF FOUND THEN
       rtn.magon := (b'1'::bit(55) >> 4) & sto != 0::bit(55);
     END IF;
-    SELECT cspower, csln2reg, cspathname INTO rtn.power, rtn.regon, rtn.path FROM cats.states WHERE csstn=px.getstation() ORDER BY cskey desc limit 1;
+    SELECT cspower, csln2reg1, cspathname INTO rtn.power, rtn.regon, rtn.path FROM cats.states WHERE csstn=px.getstation() ORDER BY cskey desc limit 1;
     SELECT cats.fractiondone() INTO rtn.progress;
     return rtn;
   END;
@@ -419,7 +419,7 @@ CREATE OR REPLACE FUNCTION cats.getrobotstate( theStn bigint) returns cats.getro
     IF FOUND THEN
       rtn.magon := (b'1'::bit(55) >> 4) & sto != 0::bit(55);
     END IF;
-    SELECT cspower, csln2reg, cspathname INTO rtn.power, rtn.regon, rtn.path FROM cats.states WHERE csstn=theStn ORDER BY cskey desc limit 1;
+    SELECT cspower, csln2reg1, cspathname INTO rtn.power, rtn.regon, rtn.path FROM cats.states WHERE csstn=theStn ORDER BY cskey desc limit 1;
     SELECT cats.fractiondone( theStn) INTO rtn.progress;
     return rtn;
   END;
