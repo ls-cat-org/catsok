@@ -1133,7 +1133,7 @@ $$ LANGUAGE SQL SECURITY DEFINER;
 ALTER FUNCTION cats.tooclose() OWNER TO lsadmin;
 
 CREATE OR REPLACE FUNCTION cats.tooclose( theStn bigint) returns boolean as $$
-  SELECT ((pX-dpX)*(pX-dpX)+(pY-dpY)*(py-dpY)+(pZ-dpZ)*(pZ-dpZ)) < 9.0E4 FROM cats.positions left join cats.diffPos on dpStn=pStn order by pkey desc limit 1;
+  SELECT ((pX-dpX)*(pX-dpX)+(pY-dpY)*(py-dpY)+(pZ-dpZ)*(pZ-dpZ)) < 9.0E4 FROM cats.positions left join cats.diffPos on dpStn=pStn WHERE pstn=$1 order by pkey desc limit 1;
 $$ LANGUAGE SQL SECURITY DEFINER;
 ALTER FUNCTION cats.tooclose(bigint) OWNER TO lsadmin;
 
@@ -2148,12 +2148,12 @@ $$ LANGUAGE SQL SECURITY DEFINER;
 ALTER FUNCTION cats.heateroff( bigint) OWNER TO lsadmin;
 
 CREATE OR REPLACE FUNCTION cats.regulon( theStn bigint) returns void AS $$
-  SELECT cats._pushqueue( $1, 'regulon');
+  SELECT cats._pushqueue( $1, 'regulon1');
 $$ LANGUAGE SQL SECURITY DEFINER;
 ALTER FUNCTION cats.regulon( bigint) OWNER TO lsadmin;
 
 CREATE OR REPLACE FUNCTION cats.reguloff( theStn bigint) returns void AS $$
-  SELECT cats._pushqueue( $1, 'reguloff');
+  SELECT cats._pushqueue( $1, 'reguloff1');
 $$ LANGUAGE SQL SECURITY DEFINER;
 ALTER FUNCTION cats.reguloff( bigint) OWNER TO lsadmin;
 
@@ -2363,7 +2363,7 @@ CREATE OR REPLACE FUNCTION cats.machineState() returns setof cats.machineStateTy
         LEFT JOIN pg_stat_activity ON procpid=pid
         LEFT JOIN px._config ON cstnkey=classid
         LEFT JOIN cats.states on classid=csstn
-        WHERE locktype='advisory' and granted and classid < 5 and classid > 0
+        WHERE locktype='advisory' and objid < 32 and granted and classid < 5 and classid > 0
         GROUP BY classid
         ORDER BY classid
       LOOP
