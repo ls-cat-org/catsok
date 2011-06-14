@@ -68,6 +68,12 @@ CREATE OR REPLACE FUNCTION cats.statesInsertTF() returns trigger as $$
         RETURN NULL;
       END IF;
     END IF;
+    IF t.csPathRunning and not NEW.csPathRunning THEN
+      --
+      -- Clear the next samples queue so we can request a new sample later
+      --
+      DELETE FROM px.nextsamples WHERE nsstn=px.getStation();
+    END IF;
     DELETE FROM cats.states WHERE cskey < NEW.cskey and csstn=px.getStation();
     RETURN NEW;
   END;
