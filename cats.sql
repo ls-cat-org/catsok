@@ -447,7 +447,7 @@ CREATE OR REPLACE FUNCTION cats.getrobotstatexml( thePid text, theStn bigint) re
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 ALTER FUNCTION cats.getrobotstatexml( text, bigint) OWNER TO lsadmin;
 
-CREATE OR REPLACE FUNCTION cats.getrobotstatexml( theStn bigint) returns xml AS $$
+CREATE OR REPLACE FUNCTION cats.getrobotstatexml( theStn int) returns xml AS $$
   DECLARE
     rtn xml;
     tmp cats.getrobotstatetype;
@@ -459,7 +459,7 @@ CREATE OR REPLACE FUNCTION cats.getrobotstatexml( theStn bigint) returns xml AS 
 
     SELECT ((((b'111111111'::bit(99)>>12) & dii)<<12) & b'111111111'::bit(99))::bit(9)::int INTO puckState FROM cats.di WHERE distn=theStn;
 
-    SELECT px.kvget( theStn, 'SamplePresent') = 'True' INTO ms;
+    SELECT px.kvget( theStn::int, 'SamplePresent') = 'True' INTO ms;
 
     SELECT etverbose INTO msg FROM px.nexterrors( theStn) WHERE etid>=30000 and etid<40000 ORDER BY etkey DESC LIMIT 1;
     IF NOT FOUND THEN
@@ -481,10 +481,10 @@ CREATE OR REPLACE FUNCTION cats.getrobotstatexml( theStn bigint) returns xml AS 
     return rtn;
   END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
-ALTER FUNCTION cats.getrobotstatexml( bigint) OWNER TO lsadmin;
+ALTER FUNCTION cats.getrobotstatexml( int) OWNER TO lsadmin;
 
 
-CREATE OR REPLACE FUNCTION cats.getrobotstatekvpxml( theStn bigint) returns xml AS $$
+CREATE OR REPLACE FUNCTION cats.getrobotstatekvpxml( theStn int) returns xml AS $$
   DECLARE
     rtn xml;
     tmp cats.getrobotstatetype;
