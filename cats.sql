@@ -75,6 +75,7 @@ CREATE OR REPLACE FUNCTION cats.statesInsertTF() returns trigger as $$
       DELETE FROM px.nextsamples WHERE nsstn=px.getStation();
     END IF;
     DELETE FROM cats.states WHERE cskey < NEW.cskey and csstn=px.getStation();
+    PERFORM px.kvset( px.getstation(), 'cats.path', NEW.csPathName);
     RETURN NEW;
   END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
@@ -1561,12 +1562,12 @@ CREATE OR REPLACE FUNCTION cats._mkcryocmd( theCmd text, theId int, theNewId int
     -- The esttime is the approximate time that the diffractometer will give up the air rights
     -- We'll plan to delay our start so that we first request air rights just after the diffractometer gives them up
     --
-    SELECT CASE WHEN extract( epoch from ttair) < esttime
+    Select CASE WHEN extract( epoch from ttair) < esttime
                 THEN to_timestamp( extract( epoch from now()) + esttime - extract( epoch from ttair))
                 ELSE now() END
                 INTO startTime
                 FROM cats._tooltiming
-                WHERE ttstn=px.getStation() and tttool=rtool1;
+                WHERE ttstn=px.getStation() and tttool=rtool1 and ttpath=thecmd;
     IF NOT FOUND THEN
       -- No timing available: just start right away
       startTime := now();
@@ -1712,7 +1713,7 @@ CREATE OR REPLACE FUNCTION cats._mkcryocmd( theStn bigint, theCmd text, theId in
                 ELSE now() END
                 INTO startTime
                 FROM cats._tooltiming
-                WHERE ttstn=theStn and tttool=rtool1;
+                WHERE ttstn=theStn and tttool=rtool1 and ttpath=thecmd;
     IF NOT FOUND THEN
       -- No timing available: just start right away
       startTime := now();
@@ -2320,14 +2321,33 @@ CREATE OR REPLACE FUNCTION cats.cmdTimingDone() returns void as $$
       return;
     END IF;
     UPDATE cats._cmdTiming SET ctdone=now() WHERE ctkey = theKey;
+
     SELECT avg(ctneedair-ctstart), avg(ctnoair-ctstart), avg(ctdone-ctstart) INTO airtime, noairtime, donetime
         FROM cats._cmdTiming
-        WHERE ctkey IN (SELECT ctkey FROM cats._cmdTiming  WHERE ctstn=px.getStation() and ctool=theTool and ctpath=thePath and ctdone is not null ORDER BY ctkey DESC LIMIT 10);
+        WHERE ctkey IN (SELECT ctkey
+                               FROM cats._cmdTiming
+                               WHERE ctstn=px.getStation()
+                                 and ctool=theTool
+                                 and ctpath=thePath
+                                 and ctdone is not null
+                               ORDER BY ctkey DESC
+                               LIMIT 10);
 
     IF airtime is not null and noairtime is not null and donetime is not null THEN
       PERFORM 1 FROM cats._tooltiming WHERE tttool=theTool and ttpath=thePath and ttstn=px.getStation();
       IF FOUND THEN
-        UPDATE cats._tooltiming SET ttair=airtime, ttnoair=noairtime, ttdone=donetime WHERE tttool=theTool and ttpath=thePath and ttstn=px.getStation();
+        --
+        -- Don't change the timing if it'll change by more than 20 percent
+        -- When a major path change takes place simply delete the tooltiming entry and 
+        -- let the statistics start anew.
+        --
+        UPDATE cats._tooltiming SET ttair=airtime, ttnoair=noairtime, ttdone=donetime
+               WHERE tttool=theTool
+                 and ttpath=thePath
+                 and abs( extract( epoch from (ttair-airtime)))     < 0.2 * extract( epoch from ttair)
+                 and abs( extract( epoch from (ttnoair-noairtime))) < 0.2 * extract( epoch from ttnoair)
+                 and abs( extract( epoch from (ttdone-donetime)))   < 0.2 * extract( epoch from ttdone)
+                 and ttstn=px.getStation();
       ELSE
         INSERT INTO cats._tooltiming (ttair, ttnoair, ttdone, ttstn, tttool, ttpath) VALUES (airtime, noairtime, donetime, px.getStation(), theTool, thePath);
       END IF;
