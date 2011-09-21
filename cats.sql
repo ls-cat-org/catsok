@@ -196,16 +196,15 @@ CREATE OR REPLACE FUNCTION cats.setStateInsertTF() returns trigger as $$
     oldState record;
   BEGIN
     SELECT * INTO oldState FROM cats.states WHERE csstn=px.getStation() and cskey != NEW.cskey ORDER BY cskey DESC LIMIT 1;
-    --    raise notice 'new lid: %  new sample: %  old lid: %  old sample: %', new.cslidnumbermounted, new.cssamplenumbermounted, oldstate.cslidnumbermounted, oldstate.cssamplenumbermounted;
     IF FOUND and (coalesce(NEW.csLidNumberMounted,0) != coalesce(oldstate.csLidNumberMounted,0) or coalesce(NEW.csSampleNumberMounted,0) != coalesce(oldstate.csSampleNumberMounted,0)) THEN
-      PERFORM px.endTransfer();
+      PERFORM px.endTransfer( NEW.csstn);
     END IF;
     RETURN NEW;
   END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 ALTER FUNCTION cats.setStateInsertTF() OWNER TO lsadmin;
 
-CREATE TRIGGER setStateInsertTigger AFTER INSERT ON cats.states FOR EACH ROW EXECUTE PROCEDURE cats.setStateInsertTF();
+CREATE TRIGGER setStateInsertTigger BEFORE INSERT ON cats.states FOR EACH ROW EXECUTE PROCEDURE cats.setStateInsertTF();
 
 
 CREATE OR REPLACE FUNCTION px.setMountedSample( tool text, lid int, sampleno int) RETURNS int AS $$
