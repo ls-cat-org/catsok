@@ -412,9 +412,9 @@ class CatsOk:
         qs = "select dpx, dpy, dpz from cats.diffpos where dpstn=px.getstation()"
         qr = self.db.query( qs)
         r = qr.dictresult()[0]
-        self.dpX = r["dpx"]
-        self.dpY = r["dpy"]
-        self.dpZ = r["dpz"]
+        self.dpX = float(r["dpx"])
+        self.dpY = float(r["dpy"])
+        self.dpZ = float(r["dpz"])
 
         #
         # Set up poll object
