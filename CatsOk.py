@@ -654,7 +654,7 @@ class CatsOk:
             print "Bad 'do' returned: %s" % (do)
             return
         else:
-            qs = "select cats.setdo( b'%s')" % (do)
+            qs = "select cats.setdo( b'%s'::bit(55))" % (do)
             self.db.query( qs)
 
         # Calculate Pr2 (robot air rights request)
