@@ -216,6 +216,7 @@ CREATE OR REPLACE FUNCTION px.setMountedSample( tool text, lid int, sampleno int
     sampId int;
     toolId int;
     diffId int;
+    ntfy text;
     
   BEGIN
     cstn := px.getStation();
@@ -235,6 +236,9 @@ CREATE OR REPLACE FUNCTION px.setMountedSample( tool text, lid int, sampleno int
     ELSE
       UPDATE px.holderPositions set hpTempLoc = 0 WHERE hpTempLoc = diffId;
     END IF;
+
+    SELECT INTO ntfy cnotifysample FROM px._config WHERE cstnkey=cstn;
+    EXECUTE 'NOTIFY '||ntfy;
     return sampId;
   END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
@@ -1211,6 +1215,17 @@ CREATE OR REPLACE FUNCTION cats._pushqueue( theStn bigint, cmd text) RETURNS VOI
   SELECT cats._pushqueue( $1, $2, now(), NULL, NULL);
 $$ LANGUAGE SQL SECURITY DEFINER;
 ALTER FUNCTION cats._pushqueue( text) OWNER TO lsadmin;
+
+
+CREATE OR REPLACE FUNCTION cats._clearqueue( theStn int) RETURNS VOID AS $$
+  DECLARE
+    theRobot inet;
+  BEGIN
+    SELECT INTO theRobot crobot FROM px._config WHERE cstnkey = theStn;
+    DELETE FROM cats._queue WHERE qaddr = theRobot;
+  END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+ALTER FUNCTION cats._clearqueue( int) OWNER TO lsadmin;
 
 
 CREATE OR REPLACE FUNCTION cats._pushqueue( theStn bigint, cmd text, startTime timestamp with time zone, thePath text, theTool int) RETURNS VOID AS $$
