@@ -99,6 +99,7 @@ class CatsOk:
     cryoLocked = None
     needAirRights = False
     haveAirRights = False
+    catsExclusionZone = None
     dpX = None
     dpY = None
     dpZ = None
@@ -146,7 +147,9 @@ class CatsOk:
                         #   This gets around the problem that the CATS will ignore commands that it doesn't like while running a path.
                         #   But allows us to immediately run a command while a path is running if it is likely to be executed.
                         #   This is a long winded explaination.  This allows us to send vdiXX commands while a path is running while queuing up the next getput/get/put
-                        #   vid90 = airrights, so we really need to be able to do this.
+                        #   vdi90 = airrights, so we really need to be able to do this.
+                        #
+                        #   vdi91 = in diffractometer air space
                         #
     cmdQueue = []       # queue of commands received from postgresql: tuple (cmd,startTime,path,tool)
     afterCmd    = []    # queue of commands to run after the current one is done
@@ -733,6 +736,13 @@ class CatsOk:
                     self.db.query( "select px.pusherror( 39200,'')")
                 # set the flag
                 self.inExclusionZone = True
+
+            #
+            # Tell the robot we are in the exclusion zone
+            #
+            if self.catsExclusionZone == None or self.catsExclusionZone != self.inExclusionZone:
+                self.pushCmd( "vdi91on")
+                self.catsExclusionZone = True
         else:
             #
             # We are NOT in the exclusion zone
@@ -750,6 +760,12 @@ class CatsOk:
                     #
                     self.needAirRights = False
                     
+            #
+            # Tell the robot we are not in the exclusion zone
+            #
+            if self.catsExclusionZone == None or self.catsExclusionZone != self.inExclusionZone:
+                self.pushCmd( "vdi91off")
+                self.catsExclusionZone = False
 
     def statusConfigParse( self, s):
         pass
