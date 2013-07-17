@@ -1316,6 +1316,12 @@ $$ LANGUAGE plpgsql SECURITY DEFINER;
 ALTER FUNCTION cats._popqueue() OWNER TO lsadmin;
 
 
+CREATE TABLE cats.pids (
+  pstn int,
+  ppid int
+);
+ALTER TABLE cats.pids OWNER TO lsadmin;
+
 CREATE OR REPLACE FUNCTION cats.init() RETURNS VOID AS $$
   --
   -- Called by process controlling the robot
@@ -1324,6 +1330,11 @@ CREATE OR REPLACE FUNCTION cats.init() RETURNS VOID AS $$
     ntfy text;
   BEGIN
     DELETE FROM cats._queue WHERE qaddr = inet_client_addr();    
+    UPDATE cats.pids SET ppid=pg_backend_pid() where pstn=px.getstation();
+    IF NOT FOUND THEN
+      INSERT INTO cats.pids (pstn,ppid) VALUES (px.getstation(), pg_backend_pid());
+    END IF;
+
     SELECT cnotifyrobot INTO ntfy FROM px._config WHERE cstnkey=px.getstation();
     IF FOUND THEN
        EXECUTE 'LISTEN ' || ntfy;
@@ -2455,15 +2466,15 @@ CREATE OR REPLACE FUNCTION cats.machineState( theStn bigint) returns int AS $$
     tmp   int;
   BEGIN
     
-
    SELECT INTO tPath, tDAR, tmp
         (bool_or(coalesce(length(cspathname),0)>0))::int * 128,
-        (bool_or(coalesce(cdiffractometer=client_addr and objid=2,false)))::int * 64,
+        (bool_or(coalesce(ppid != pid and objid=2,false)))::int * 64,
         bit_or((2^(objid::int-1))::int)
       FROM pg_locks
       LEFT JOIN pg_stat_activity ON procpid=pid
       LEFT JOIN px._config ON cstnkey=theStn
-      LEFT JOIN cats.states on csstn=theStn
+      LEFT JOIN cats.states ON csstn=theStn
+      LEFT JOIN cats.pids ON pstn=theStn
       WHERE locktype='advisory' and objid < 32 and granted;
 
     SELECT CASE WHEN cats.tooclose(theStn) THEN 512 ELSE 0 END INTO tExcl;
