@@ -1530,7 +1530,7 @@ CREATE OR REPLACE FUNCTION cats._mkcryocmd( theCmd text, theId int, theNewId int
     INSERT INTO cats._args (aCmd) VALUES ( theCmd);
 
     --
-    -- theId is zero for an "get".  Here we need to get the tool number from the current state
+    -- theId is zero for a "get".  Here we need to get the tool number from the current state
     --
     IF theId = 0 THEN
       SELECT cttoolno INTO rtool1 FROM cats.states LEFT JOIN cats._cylinder2tool ON ctToolName=csToolNumber WHERE csstn=px.getStation() ORDER BY csKey desc LIMIT 1;
@@ -1676,7 +1676,7 @@ CREATE OR REPLACE FUNCTION cats._mkcryocmd( theStn bigint, theCmd text, theId in
     INSERT INTO cats._args (aCmd) VALUES ( theCmd);
 
     --
-    -- theId is zero for an "get".  Here we need to get the tool number from the current state
+    -- theId is zero for a "get".  Here we need to get the tool number from the current state
     --
     IF theId = 0 THEN
       SELECT cttoolno INTO rtool1 FROM cats.states LEFT JOIN cats._cylinder2tool ON ctToolName=csToolNumber WHERE csstn=theStn ORDER BY csKey desc LIMIT 1;
