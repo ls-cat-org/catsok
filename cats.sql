@@ -2433,8 +2433,8 @@ CREATE OR REPLACE FUNCTION cats.machineState() returns setof cats.machineStateTy
           (bool_or(coalesce(length(cspathname),0)>0))::int * 128,
           (bool_or(coalesce(cdiffractometer=client_addr and objid=2,false)))::int * 64,
           bit_or((2^(objid::int-1))::int)
-        FROM pg_locks
-        LEFT JOIN pg_stat_activity ON procpid=pid
+        FROM pg_locks as a
+        LEFT JOIN pg_stat_activity as b ON a.pid=b.pid
         LEFT JOIN px._config ON cstnkey=classid
         LEFT JOIN cats.states on classid=csstn
         WHERE locktype='advisory' and objid < 32 and granted and classid < 5 and classid > 0
@@ -2468,10 +2468,10 @@ CREATE OR REPLACE FUNCTION cats.machineState( theStn bigint) returns int AS $$
     
    SELECT INTO tPath, tDAR, tmp
         (bool_or(coalesce(length(cspathname),0)>0))::int * 128,
-        (bool_or(coalesce(ppid != pid and objid=2,false)))::int * 64,
+        (bool_or(coalesce(ppid != a.pid and objid=2,false)))::int * 64,
         bit_or((2^(objid::int-1))::int)
-      FROM pg_locks
-      LEFT JOIN pg_stat_activity ON procpid=pid
+      FROM pg_locks as a
+      LEFT JOIN pg_stat_activity as b ON a.pid=b.pid
       LEFT JOIN px._config ON cstnkey=theStn
       LEFT JOIN cats.states ON csstn=theStn
       LEFT JOIN cats.pids ON pstn=theStn
