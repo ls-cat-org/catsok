@@ -25,8 +25,14 @@
 #
 
 
-import sys, os, select, pg, time, traceback, datetime, socket
-
+import sys              # stderr
+import select           # poll
+import pg               # our db world
+import time             # sleep between invocations
+import traceback        # error tracking
+import datetime         # our time format
+import socket           # communications with the robot itself
+import redis            # new database model
 
 
 class CatsOkError( Exception):
@@ -41,6 +47,59 @@ class CatsOkError( Exception):
 
     def __str__( self):
         return repr( self.value)
+
+
+class _R:
+    r       = None      # our connection
+    rdy     = False     # true when it looks like our connection is ok and redis is configured
+    head    = None      # the start of all our keys in the redis database
+    robopub = None      # our pen name
+    ourKVs  = {}        # a list of our KV pairs
+
+    def getconfig( self):
+        hn = socket.gethostname()
+        try:
+            self.head = self.r.hget( 'config.%s' % (hn), 'HEAD')
+            if self.head == None or self.head == '':
+                print >> sys.stderr, 'Redis is not configured for this host "%s"' % (hn)
+                self.rdy = False
+                self.head = None
+                return
+
+            self.robopub = self.r.hget( 'config.%s' % (hn), 'ROBOPUB')
+
+        except redis.exceptions.ConnectionError:
+            print >> sys.stderr, 'Redis connection error.  Is it running?'
+            self.rdy = False
+            self.head = None
+            return
+
+
+    def __init__( self):
+        self.r = redis.Redis()          # should all be defaults
+        self.getconfig()
+
+    def set( self, k, v):
+        if self.ourKVs.has_key( k) and self.ourKVs[k] == v:
+            return
+
+        try:
+            if self.r.ping():
+                if self.head == None:
+                    self.getconfig()
+                if self.head == None:
+                    return
+                
+                bigk = "%s.%s" % (self.head, k)
+
+                self.r.hmset( bigk, {'KEY': bigk, 'VALUE':v})
+
+                if self.robopub:
+                    self.r.publish( self.robopub, bigk)
+
+                self.ourKVs[k] = v
+        except:
+            print >> sys.stderr, "Redis error setting key '%s' to value '%s'" % (k, v)
 
 
 class _Q:
@@ -179,6 +238,17 @@ class CatsOk:
     statusQueue = []    # queue of status requests to send to cats server
     statusFailedPushCount = 0
 
+    collision     = None # state from DI (99 digit binary numbers written in ascii is a weird design decision)
+    cryoHighAlarm = None # state from DI (99 digit binary numbers written in ascii is a weird design decision)
+    cryoHigh      = None # state from DI (99 digit binary numbers written in ascii is a weird design decision)
+    cryoLow       = None # state from DI (99 digit binary numbers written in ascii is a weird design decision)
+    cryoLowAlarm  = None # state from DI (99 digit binary numbers written in ascii is a weird design decision)
+    lid1Open      = None # state from DI (99 digit binary numbers written in ascii is a weird design decision)
+    lid2Open      = None # state from DI (99 digit binary numbers written in ascii is a weird design decision)
+    lid3Open      = None # state from DI (99 digit binary numbers written in ascii is a weird design decision)
+    toolOpen      = None # state from DI (99 digit binary numbers written in ascii is a weird design decision)
+    toolClosed    = None # state from DI (99 digit binary numbers written in ascii is a weird design decision)
+    pucksDetected = None # from bits DI (rank 13 through 21, aka bits 12 to 20)
 
     def maybePushStatus( self, rqst):
         if self.t2 == None:
@@ -402,6 +472,10 @@ class CatsOk:
         self.db = _Q()
 
         #
+        # set up our reids connection
+        self.redis = _R()
+
+        #
         # establish connections to CATS sockets
         if stn != None:
             qs = "select coalesce(px.getcatsaddr( stn='%s')::text,'Not Found') as a" % stn
@@ -473,13 +547,14 @@ class CatsOk:
             "do"        : { "period" : 0.5,    "last" : None, "rqstCnt" : 0, "rcvdCnt" : 0},
             "di"        : { "period" : 0.6,    "last" : None, "rqstCnt" : 0, "rcvdCnt" : 0},
             "position"  : { "period" : 0.51,   "last" : None, "rqstCnt" : 0, "rcvdCnt" : 0},
-            "config"     : { "period" : 86400, "last" : None, "rqstCnt" : 0, "rcvdCnt" : 0},
+            "config"    : { "period" : 86400,  "last" : None, "rqstCnt" : 0, "rcvdCnt" : 0},
             "message"   : { "period" : 0.65,   "last" : None, "rqstCnt" : 0, "rcvdCnt" : 0}
             }
 
         self.db.query( "select px.lockCryo()")
         self.cryoLocked = True
-
+        self.redis.set( "robot.cryoLocked", True)
+        
     def close( self):
         if self.t1 != None:
             self.t1.close()
@@ -519,17 +594,21 @@ class CatsOk:
 
             if runFlag and self.needAirRights and not self.haveAirRights:
                 qs = "select px.requestRobotAirRights() as rslt"
+                self.redis.set( "robot.airRights", "Requested")
                 qr = self.db.query( qs)
                 rslt = qr.dictresult()[0]["rslt"]
                 if rslt == "t":
                     self.haveAirRights = True
                     self.pushCmd( "vdi90on", datetime.datetime.now())
+                    self.redis.set( "robot.airRights", True)
                     print "received haveAirRights and setting vdi90on"
 
             if runFlag and not self.needAirRights and self.haveAirRights:
+                self.redis.set( "robot.airRights", "Returning")
                 self.db.query( "select px.dropRobotAirRights()")    # drop rights and send notify that sample is ready (if it is)
                 self.pushCmd( "vdi90off")
                 self.haveAirRights = False
+                self.redis.set( "robot.airRights", False)
                 print "dropped Air Rights and setting vdi90off"
 
         self.close()
@@ -592,6 +671,29 @@ class CatsOk:
 
             qs = qs + ")"
             self.db.query( qs)
+
+            self.redis.set( "robot.power",          a[ 0])
+            self.redis.set( "robot.autoModeStatus", a[ 1])
+            self.redis.set( "robot.defaultStatus",  a[ 2])
+            self.redis.set( "robot.tool",           a[ 3])
+            self.redis.set( "robot.path",           a[ 4])
+            self.redis.set( "robot.lidTooled",      a[ 5])
+            self.redis.set( "robot.sampleTooled",   a[ 6])
+            self.redis.set( "robot.lidMounted",     a[ 7])
+            self.redis.set( "robot.sampleMounted",  a[ 8])
+            self.redis.set( "robot.platedTooled",   a[ 9])
+            self.redis.set( "robot.well",           a[10])
+            self.redis.set( "robot.barcode",        a[11])
+            self.redis.set( "robot.running",        a[12])
+            self.redis.set( "robot.ln2reg1",        a[13])
+            self.redis.set( "robot.ln2reg2",        a[14])
+            self.redis.set( "robot.speed",          a[15])
+            self.redis.set( "robot.dewar1pucks",    a[16])
+            self.redis.set( "robot.dewar2pucks",    a[17])
+            self.redis.set( "robot.dewar1pos",      a[18])
+            self.redis.set( "robot.dewar2pos",      a[19])
+            
+
             self.statusStateLast = s
 
 
@@ -694,6 +796,8 @@ class CatsOk:
                 print "Unlocking Cryo..."
                 self.db.query( "select px.unlockCryo()")
                 self.cryoLocked = False
+                self.redis.set( "robot.cryoLocked", False)
+
             self.db.query( "select cats.cmdTimingNeedAir()")
 
         # robot no longer needs airrights on falling edge of Pr2
@@ -705,6 +809,7 @@ class CatsOk:
                 print "Locking Cryo..."
                 self.db.query( "select px.lockCryo()")
                 self.cryoLocked = True
+                self.redis.set( "robot.cryoLocked", True)
 
 
     def statusDiParse( self, s):
@@ -715,6 +820,47 @@ class CatsOk:
         self.db.query( qs)
 
         self.diES  = di[1] == "1"
+        self.redis.set( "robot.emergencyStop", self.diES)
+
+        self.collision = di[2] == "1"
+        self.redis.set( "robot.collision", self.collision)
+
+        self.cryoHighAlarm = di[3] == "1"
+        self.redis.set( "robot.cryoHighAlarm", self.cryoHighAlarm)
+
+        self.cryoHigh = di[4] == "1"
+        self.redis.set( "robot.cryoHigh", self.cryoHigh)
+
+        self.cryoLow = di[5] == "1"
+        self.redis.set( "robot.cryoLow", self.cryoLow)
+
+        self.cryoLowAlarm = di[6] == "1"
+        self.redis.set( "robot.cryoLowAlarm", self.cryoLowAlarm)
+
+        self.lid1Open = di[21] == "1"
+        self.redis.set( "robot.lid1Open", self.lid1Open)
+
+        self.lid2Open = di[22] == "1"
+        self.redis.set( "robot.lid2Open", self.lid2Open)
+
+        self.lid3Open = di[23] == "1"
+        self.redis.set( "robot.lid3Open", self.lid3Open)
+
+        self.toolOpen = di[24] == "1"
+        self.redis.set( "robot.toolOpen", self.toolOpen)
+
+        self.toolClosed = di[25] == "1"
+        self.redis.set( "robot.toolClosed", self.toolOpen)
+
+        tmp  = 0
+        tmp2 = 1
+        for i in range( 12, 21):
+            if di[i] == "1":
+                tmp += tmp2
+            tmp2 *= 2
+
+        self.pucksDetected = tmp
+        self.redis.set( "robot.pucksDetected", self.pucksDetected);
 
     def statusPositionParse( self, s):
         self.srqst["position"]["rcvdCnt"] = self.srqst["position"]["rcvdCnt"] + 1
@@ -745,6 +891,7 @@ class CatsOk:
             #
             if not self.inExclusionZone:
                 print "In Exclusion zone"
+                self.redis.set( "robot.inExclusionZone", True)
                 # we are in the exclusion zone but thought that we were not
                 #
                 if not self.haveAirRights:
@@ -771,6 +918,7 @@ class CatsOk:
             # We are NOT in the exclusion zone
             if self.inExclusionZone:
                 print "Not in exclusion zone"
+                self.redis.set( "robot.inExclusionZone", False)
                 # but we thought we were
                 self.db.query( "select px.pusherror( 30200,'')")
                 self.inExclusionZone = False
