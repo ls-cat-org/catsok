@@ -772,19 +772,33 @@ class CatsOk:
         #
         # Check if the magnet state makes sense
         #
-        print "camera cap detector: %s", self.redis.get( "capDetected")
 
         if self.checkMountedSample and pathName != 'get' and (datetime.datetime.now() - self.sampleMounted["timestamp"] > datetime.timedelta(0,5)):
             self.checkMountedSample = False
-            qr = self.db.query( "select px.getmagnetstate() as ms")
-            ms = qr.dictresult()[0]["ms"]
-            print "Sample Mounted: ", ms
-            print self.sampleMounted
+
             #
-            # check if the robot and the MD2 agree
+            # Uncomment this if you want to go back to the smart magnet detector
+            #
+
+            # qr = self.db.query( "select px.getmagnetstate() as ms")
+            # ms = qr.dictresult()[0]["ms"]
+            # print "Sample Mounted: ", ms
+            # print self.sampleMounted
+
+            #
+            # But be sure to comment this part too
+            #
+            if self.redis.get( "capDetected") == "1":
+                ms = 't'
+            else:
+                ms = 'f'
+            
+
+            #
+            # check if the robot and the MD2 (or the camera cap detector) agree
             #
             if ms == "t" and (self.sampleMounted["lid"] == "" or self.sampleMounted["sample"] == ""):
-                print "MD2 says sample on diffractometer but robot thinks there isn't"
+                print "It looks to me like there is a  sample on diffractometer but robot thinks there isn't one"
 
                 self.pushCmd( "panic")
                 if not self.inRecoveryMode:
