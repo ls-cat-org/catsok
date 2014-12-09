@@ -102,6 +102,23 @@ class _R:
             print >> sys.stderr, "Redis error setting key '%s' to value '%s'" % (k, v)
 
 
+    def get( self, k):
+        try:
+            if self.r.ping():
+                if self.head == None:
+                    self.getconfig()
+                if self.head == None:
+                    return None
+
+            bigk = "%s.%s" % (self.head, k)
+            v = self.r.hget( bigk, "VALUE")
+
+            self.ourKVs[k] = v
+            return v
+        except:
+            print >> sys.stderr, "Redis error getting key '%s'" % (k)
+
+
 class _Q:
     
     db = None   # our database connection
@@ -755,6 +772,8 @@ class CatsOk:
         #
         # Check if the magnet state makes sense
         #
+        print "camera cap detector: %s", self.redis.get( "capDetected")
+
         if self.checkMountedSample and pathName != 'get' and (datetime.datetime.now() - self.sampleMounted["timestamp"] > datetime.timedelta(0,5)):
             self.checkMountedSample = False
             qr = self.db.query( "select px.getmagnetstate() as ms")
@@ -765,7 +784,8 @@ class CatsOk:
             # check if the robot and the MD2 agree
             #
             if ms == "t" and (self.sampleMounted["lid"] == "" or self.sampleMounted["sample"] == ""):
-                print "Sample on diffractometer but robot thinks there isn't: aborting"
+                print "MD2 says sample on diffractometer but robot thinks there isn't"
+
                 self.pushCmd( "panic")
                 if not self.inRecoveryMode:
                     self.inRecoveryMode = True
