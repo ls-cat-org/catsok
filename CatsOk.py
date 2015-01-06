@@ -525,15 +525,6 @@ class CatsOk:
         # Listen to db requests
         self.db.query( "select cats.init()")
 
-        #
-        # initialize the cap detector
-        if self.redis.get( "capDetected") == "1":
-            self.capDetected = True
-            self.pushCmd( "vdi92on")
-        else:
-            self.capDetected = False
-            self.pushCmd( "vdi92off")
-        
 
         #
         # Find diffractometer position: assume it does not change while we are running
@@ -584,6 +575,7 @@ class CatsOk:
         self.cryoLocked = True
         self.redis.set( "robot.cryoLocked", True)
         
+
     def close( self):
         if self.t1 != None:
             self.t1.close()
@@ -600,6 +592,16 @@ class CatsOk:
         print "starting run"
         self.pushCmd( "vdi90off")
         lastDbTime = datetime.datetime.now()
+
+        #
+        # initialize the cap detector
+        if self.redis.get( "capDetected") == "1":
+            self.capDetected = True
+            self.pushCmd( "vdi92on")
+        else:
+            self.capDetected = False
+            self.pushCmd( "vdi92off")
+        
         while( runFlag):
             for ( fd, event) in self.p.poll( 100):
                 runFlag = runFlag and self.fan[fd](event)
