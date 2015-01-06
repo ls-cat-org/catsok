@@ -609,6 +609,20 @@ class CatsOk:
                     break
             n = datetime.datetime.now()
 
+            #
+            # set the cap detector flag
+            #
+            if self.redis.get( "capDetected") == "1":
+                if not self.capDetected:
+                    self.capDetected = true
+                    self.pushCmd( "vdi92on")
+            else:
+                if self.capDetected:
+                    self.capDetected = false
+                    self.pushCmd( "vdi92off")
+
+
+
             if runFlag and not self.waiting:
                 #
                 # queue up new requests if it is time to
@@ -783,15 +797,6 @@ class CatsOk:
         if self.workingPath == "" and not self.inExclusionZone and self.haveAirRights:
             self.needAirRights = False
 
-
-        if self.redis.get( "capDetected") == "1":
-            if not self.capDetected:
-                self.capDetected = true
-                self.pushCmd( "vdi92on")
-        else:
-            if self.capDetected:
-                self.capDetected = false
-                self.pushCmd( "vdi92off")
 
         #
         # Check if the magnet state makes sense
