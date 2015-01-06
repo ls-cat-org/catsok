@@ -3,7 +3,7 @@
 #
 # Support for data collection at LS-CAT
 #
-# Copyright 2008-2013 by Keith Brister, Northwestern University
+# Copyright 2008-2015 by Keith Brister, Northwestern University
 #
 #   This file is part of the LS-CAT Beamline Control Package which is
 #   free software: you can redistribute it and/or modify it under the
@@ -192,6 +192,7 @@ class CatsOk:
     sampleMounted = { "lid" : None, "sample" : None, "timestamp" : None}
     sampleTooled  = { "lid" : None, "sample" : None, "timestamp" : None}
     checkMountedSample = False
+    capDetected   = None
 
     dbFlag       = True        # indicates a command might still be in the queue
     lastPathName  = ""
@@ -249,6 +250,7 @@ class CatsOk:
                         #   vdi90 = airrights, so we really need to be able to do this.
                         #
                         #   vdi91 = in diffractometer air space
+                        #   vdi92 = sample mounted
                         #
     cmdQueue = []       # queue of commands received from postgresql: tuple (cmd,startTime,path,tool)
     afterCmd    = []    # queue of commands to run after the current one is done
@@ -524,6 +526,16 @@ class CatsOk:
         self.db.query( "select cats.init()")
 
         #
+        # initialize the cap detector
+        if self.redis.get( "capDetected") == "1":
+            self.capDetected = True
+            self.pushCmd( "vdi92on")
+        else:
+            self.capDetected = False
+            self.pushCmd( "vdi92off")
+        
+
+        #
         # Find diffractometer position: assume it does not change while we are running
         #
         qs = "select dpx, dpy, dpz from cats.diffpos where dpstn=px.getstation()"
@@ -594,7 +606,7 @@ class CatsOk:
                 if not runFlag:
                     break
             n = datetime.datetime.now()
-            #print "now: ",n
+
             if runFlag and not self.waiting:
                 #
                 # queue up new requests if it is time to
@@ -768,6 +780,16 @@ class CatsOk:
         #
         if self.workingPath == "" and not self.inExclusionZone and self.haveAirRights:
             self.needAirRights = False
+
+
+        if self.redis.get( "capDetected") == "1":
+            if not self.capDetected:
+                self.capDetected = true
+                self.pushCmd( "vdi92on")
+        else:
+            if self.capDetected:
+                self.capDetected = false
+                self.pushCmd( "vdi92off")
 
         #
         # Check if the magnet state makes sense
