@@ -59,7 +59,7 @@ class _R:
     def getconfig( self):
         hn = socket.gethostname()
         try:
-            self.head = self.r.hget( 'config.%s' % (hn), 'HEAD')
+            self.head = self.r.hget( 'config.%s' % (hn.lower()), 'HEAD')
             if self.head == None or self.head == '':
                 print >> sys.stderr, 'Redis is not configured for this host "%s"' % (hn)
                 self.rdy = False
