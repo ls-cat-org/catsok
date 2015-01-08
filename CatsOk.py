@@ -24,6 +24,25 @@
 #
 #
 
+#
+# Delay before checking to see if the sample dismouted successfully in
+# seconds.  Should be either
+
+#   1) Set so that the check occurs after the old sample would have
+#      been replaced but before the next sample has been picked up AND
+#      when the gripper is not in the LN2 (Important for when using
+#      the smart magnet to detect the old cap.)
+#
+#   2) Set so that the check occurs any time when the gripper is not
+#      in the LN2 AND before it picks up the next sample.  Use this
+#      when the video cap detector is used.  This timing is not as
+#      strict as the first case.
+#
+#   3) Set to "None".  Use this when VDI92 is configured in the CATS
+#      code to do it's own cap check at a place in the path where it
+#      makes sense to do so.
+
+dismountSampleCheckDelaySeconds = 10
 
 import sys              # stderr
 import select           # poll
@@ -801,7 +820,7 @@ class CatsOk:
         # Check if the magnet state makes sense
         #
 
-        if self.checkMountedSample and pathName != 'get' and (datetime.datetime.now() - self.sampleMounted["timestamp"] > datetime.timedelta(0,5)):
+        if dismountSampleCheckDelaySeconds != None and self.checkMountedSample and pathName != 'get' and (datetime.datetime.now() - self.sampleMounted["timestamp"] > datetime.timedelta(0,dismountSampleCheckDelaySeconds)):
             self.checkMountedSample = False
 
             #
