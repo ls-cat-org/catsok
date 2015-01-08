@@ -1,4 +1,4 @@
-#! /usr/local/bin/python
+#! /usr/bin/python
 #
 #
 # Support for data collection at LS-CAT
