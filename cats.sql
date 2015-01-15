@@ -1414,9 +1414,9 @@ CREATE OR REPLACE FUNCTION cats._gencmd( k bigint) returns text as $$
       INTO rtn
       FROM cats._args
       WHERE aKey = k;
-    IF FOUND THEN
-      DELETE FROM cats._args WHERE aKey=k;
-    END IF;
+    --IF FOUND THEN
+    --  DELETE FROM cats._args WHERE aKey=k;
+    --END IF;
     return rtn;
   END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
@@ -1527,7 +1527,7 @@ CREATE OR REPLACE FUNCTION cats._mkcryocmd( theCmd text, theId int, theNewId int
       PERFORM cats._pushqueue( 'on');
     END IF;    
 
-    INSERT INTO cats._args (aCmd) VALUES ( theCmd);
+    INSERT INTO cats._args (aCmd) VALUES (theCmd);
 
     --
     -- theId is zero for a "get".  Here we need to get the tool number from the current state
@@ -1673,7 +1673,7 @@ CREATE OR REPLACE FUNCTION cats._mkcryocmd( theStn bigint, theCmd text, theId in
       PERFORM cats._pushqueue( theStn, 'on');
     END IF;    
 
-    INSERT INTO cats._args (aCmd) VALUES ( theCmd);
+    INSERT INTO cats._args (aCmd) VALUES (theCmd);
 
     --
     -- theId is zero for a "get".  Here we need to get the tool number from the current state
@@ -1709,7 +1709,7 @@ CREATE OR REPLACE FUNCTION cats._mkcryocmd( theStn bigint, theCmd text, theId in
         return 0;
       END IF;
       -- Now we know what we want
-      UPDATE cats._args SET aCap=rtool1, aLid=rlid1, aSample=rsmpl1 WHERE akey=currval('cats._args_akey_seq');
+     UPDATE cats._args SET aCap=rtool1, aLid=rlid1, aSample=rsmpl1 WHERE akey=currval('cats._args_akey_seq');
     END IF;
 
     IF theId != 0 and theNewId != 0 THEN
