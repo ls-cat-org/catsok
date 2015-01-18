@@ -39,7 +39,7 @@
 #      strict as the first case.
 #
 #   3) Set to "None".  Use this when VDI92 is configured in the CATS
-#      code to do it's own cap check at a place in the path where it
+#      code to do its own cap check at a place in the path where it
 #      makes sense to do so.
 
 dismountSampleCheckDelaySeconds = 10
