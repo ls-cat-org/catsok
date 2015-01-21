@@ -62,7 +62,7 @@ CREATE OR REPLACE FUNCTION cats.statesInsertTF() returns trigger as $$
   DECLARE
     t RECORD;
   BEGIN
-    SELECT * INTO t FROM cats.states WHERE csStn=px.getStation() ORDER BY csTSLast DESC LIMIT 1;
+    SELECT * INTO t FROM cats.states WHERE csStn=NEW.csStn ORDER BY csTSLast DESC LIMIT 1;
     IF FOUND THEN
       IF
         t.csPower = NEW.csPower AND
@@ -95,7 +95,7 @@ CREATE OR REPLACE FUNCTION cats.statesInsertTF() returns trigger as $$
       --
       -- Clear the next samples queue so we can request a new sample later
       --
-      DELETE FROM px.nextsamples WHERE nsstn=px.getStation();
+      DELETE FROM px.nextsamples WHERE nsstn=NEW.csStn;
     END IF;
     DELETE FROM cats.states WHERE cskey < NEW.cskey and csstn=px.getStation();
     PERFORM px.kvset( px.getstation(), 'cats.path', NEW.csPathName);
