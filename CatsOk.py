@@ -862,9 +862,9 @@ class CatsOk:
         if do[0] != "1" and do[0] != "0":
             print "Bad 'do' returned: %s" % (do)
             return
-        else:
-            qs = "select cats.setdo( b'%s'::bit(55))" % (do)
-            self.db.query( qs)
+        #else:
+        #    qs = "select cats.setdo( b'%s'::bit(55))" % (do)
+        #    self.db.query( qs)
 
         # Calculate Pr2 (robot air rights request)
         lastPr2 = self.Pr2
@@ -897,8 +897,8 @@ class CatsOk:
         self.srqst["di"]["rcvdCnt"] = self.srqst["di"]["rcvdCnt"] + 1
         di = s[s.find("(")+1:s.find(")")]
         # 111100010000000000000000011000000001110000000000000000000000000000000000000000000101101110000000000
-        qs = "select cats.setdi( b'%s')" % (di)
-        self.db.query( qs)
+        #qs = "select cats.setdi( b'%s')" % (di)
+        #self.db.query( qs)
 
         self.diES  = di[1] == "1"
         self.redis.set( "robot.emergencyStop", self.diES)
