@@ -1927,6 +1927,164 @@ CREATE OR REPLACE FUNCTION cats.getput_bcrd( theId int, xx int, yy int, zz int, 
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 ALTER FUNCTION cats.getput( int, int, int, int, numeric) OWNER TO lsadmin;
 
+CREATE OR REPLACE FUNCTION cats.dismountfailurerecovery( stn int) returns void AS $$
+  DECLARE
+    prevsam int;
+    dwr     int;
+    cyl     int;
+    smp     int;
+    tool    int;
+    sample  int;
+    lid     int;
+
+  BEGIN
+    SELECT INTO prevsam psid FROM px.previoussample WHERE psstn = stn ORDER BY pskey desc limit 1;
+    IF NOT FOUND or prevsam is null or prevsam = 0 THEN
+      return;
+    END IF;
+
+    dwr = (prevsam & x'00ff0000'::int) >> 16;
+    cyl = (prevsam & x'0000ff00'::int) >> 8;
+    smp =  prevsam & x'000000ff'::int;    
+
+    lid = dwr - 2;
+    SELECT INTO tool, sample  cttoolno, (cyl - ctoff)*ctnsamps + smp FROM cats._cylinder2tool WHERE ctcyl = cyl;
+    
+    PERFORM cats.setdiffr( stn, lid, sample, tool);
+    
+  END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+ALTER FUNCTION cats.dismountfailurerecovery( int) OWNER TO lsadmin;
+
+
+
+CREATE OR REPLACE FUNCTION cats.recovery_no_back( stn int) returns void AS $$
+  DECLARE
+  BEGIN
+    PERFORM px.tunaLoadInit( stn);										-- initialize our tuna program
+    PERFORM px.tunaLoad( stn, 'px.kvset('||stn||',''robot.recovering'',    ''1'')');				-- Send status to the user
+    PERFORM px.tunaLoad( stn, 'px.kvset('||stn||',''robot.recoveryStatus'', ''Starting Recovery'')');
+    PERFORM px.tunaLoad( stn, 'px.kvset('||stn||',''robot.recoveryStatus'', ''Aborting Current Path'')');
+    PERFORM px.tunaLoad( stn, 'cats.abort('||stn||')');								-- Run the abort command. The step rate should be low enough that the command should complete before the next step
+    PERFORM px.tunaLoad( stn, 'px.kvset('||stn||',''robot.recoveryStatus'', ''Running Safe'')');		-- Let the user know what is going on
+    PERFORM px.tunaLoad( stn, 'px.tunaMemorySet('||stn||', ''recoveryRunningArm'', ''1'')');			-- Prepare to run the "safe" path
+    PERFORM px.tunaLoad( stn, 'cats.safe('||stn||',0)');							-- Start the "safe" path
+    PERFORM px.tunaLoad( stn, 'WHILE px.tunaMemoryGet('||stn||', ''recoveryRunningArm'')!=''0'' or px.kvget( '||stn||', ''robot.running'')::int != 0');             -- Loop while we are running or have not started
+                                 -- Reset our running flag once we've started: step must be short enough to catch states
+                                 --   Expected Sequence
+                                 --       Arm    Running
+                                 --        1        0
+                                 --        1        1
+                                 --        0        1
+                                 --        0        0
+                                 --
+                                 --  Arm(n+1)  =  Arm(n)  and not running(n)
+                                 --
+    PERFORM px.tunaLoad( stn,   'px.tunaMemorySet('||stn||', ''recoveryRunningArm'', CASE WHEN px.tunaMemoryGet('||stn||',''recoveryRunningArm'')::int!=0 and px.kvget( '||stn||', ''robot.running'')::int = 0 THEN ''1'' ELSE ''0'' END)');
+    PERFORM px.tunaLoad( stn,   'RETURN');
+    PERFORM px.tunaLoad( stn, 'px.kvset('||stn||',''robot.recoveryStatus'', ''Resetting Robot'')');		-- Start getting the robot into a known state
+    PERFORM px.tunaLoad( stn, 'cats.magnetoff('||stn||')');							-- Forget the sample mounted on the diffractometer
+    PERFORM px.tunaLoad( stn, 'cats.magneton('||stn||')');							--
+    PERFORM px.tunaLoad( stn, 'cats.opentool('||stn||')');							-- Forget the sample in the tool
+    PERFORM px.tunaLoad( stn, 'cats.closetool('||stn||')');							--
+    PERFORM px.tunaLoad( stn, 'cats.clearmemory('||stn||')');							-- Clear the memory, reset the parameters, and reset the motion
+    PERFORM px.tunaLoad( stn, 'cats.resetparameters('||stn||')');						--
+    PERFORM px.tunaLoad( stn, 'cats.resetmotion('||stn||')');							--
+    PERFORM px.tunaLoad( stn, 'px.kvset('||stn||',''robot.recoveryStatus'', ''Done'')');			-- Tell the user we are done
+    PERFORM px.tunaLoad( stn, 'px.kvset('||stn||',''robot.recovering'', ''0'')');				-- Lower the flag letting the UI know we are done
+    PERFORM px.tunaLoad( stn, 'RETURN');									-- End of program
+
+    PERFORM px.kvset( stn, 'robot.recovering', '1');								-- Flag for the user program to run "tunaStep"
+  END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+ALTER FUNCTION cats.recovery_no_back( int) OWNER TO lsadmin;
+
+
+CREATE OR REPLACE FUNCTION cats.recovery_back( stn int) returns void AS $$
+  DECLARE
+  BEGIN
+    PERFORM px.tunaLoadInit( stn);										-- initialize our tuna program
+    PERFORM px.tunaLoad( stn, 'px.kvset('||stn||',''robot.recovering'',    ''1'')');				-- Send status to the user
+    PERFORM px.tunaLoad( stn, 'px.kvset('||stn||',''robot.recoveryStatus'', ''Starting Recovery'')');
+    PERFORM px.tunaLoad( stn, 'px.kvset('||stn||',''robot.recoveryStatus'', ''Aborting Current Path'')');
+    PERFORM px.tunaLoad( stn, 'cats.abort('||stn||')');								-- Run the abort command. The step rate should be low enough that the command should complete before the next step
+
+    PERFORM px.tunaLoad( stn, 'px.kvset('||stn||',''robot.recoveryStatus'', ''Running "Safe"'')');		-- Let the user know what is going on
+    PERFORM px.tunaLoad( stn, 'px.tunaMemorySet('||stn||', ''recoveryRunningArm'', ''1'')');			-- Prepare to run the "safe" path
+    PERFORM px.tunaLoad( stn, 'cats.safe('||stn||',0)');							-- Start the "safe" path
+    PERFORM px.tunaLoad( stn, 'WHILE px.tunaMemoryGet('||stn||', ''recoveryRunningArm'')!=''0'' or px.kvget( '||stn||', ''robot.running'')::int != 0');             -- Loop while we are running or have not started
+                                 -- Reset our running flag once we've started: step must be short enough to catch states
+                                 --   Expected Sequence
+                                 --       Arm    Running
+                                 --        1        0
+                                 --        1        1
+                                 --        0        1
+                                 --        0        0
+                                 --
+                                 --  Arm(n+1)  =  Arm(n)  and not running(n)
+                                 --
+    PERFORM px.tunaLoad( stn,   'px.tunaMemorySet('||stn||', ''recoveryRunningArm'', CASE WHEN px.tunaMemoryGet('||stn||',''recoveryRunningArm'')::int!=0 and px.kvget( '||stn||', ''robot.running'')::int = 0 THEN ''1'' ELSE ''0'' END)');
+    PERFORM px.tunaLoad( stn,   'RETURN');
+
+    PERFORM px.tunaLoad( stn, 'px.kvset('||stn||',''robot.recoveryStatus'', ''Running "Back"'')');		-- Let the user know what is going on
+    PERFORM px.tunaLoad( stn, 'px.tunaMemorySet('||stn||', ''recoveryRunningArm'', ''1'')');			-- Prepare to run the "back" path
+    PERFORM px.tunaLoad( stn, 'cats.back('||stn||',0)');							-- Start the "back" path
+    PERFORM px.tunaLoad( stn, 'WHILE px.tunaMemoryGet('||stn||', ''recoveryRunningArm'')!=''0'' or px.kvget( '||stn||', ''robot.running'')::int != 0');             -- Loop while we are running or have not started
+    PERFORM px.tunaLoad( stn,   'px.tunaMemorySet('||stn||', ''recoveryRunningArm'', CASE WHEN px.tunaMemoryGet('||stn||',''recoveryRunningArm'')::int!=0 and px.kvget( '||stn||', ''robot.running'')::int = 0 THEN ''1'' ELSE ''0'' END)');
+    PERFORM px.tunaLoad( stn,   'RETURN');
+
+    PERFORM px.tunaLoad( stn, 'px.kvset('||stn||',''robot.recoveryStatus'', ''Resetting Robot'')');		-- Start getting the robot into a known state
+    PERFORM px.tunaLoad( stn, 'cats.magnetoff('||stn||')');							-- Forget the sample mounted on the diffractometer
+    PERFORM px.tunaLoad( stn, 'cats.magneton('||stn||')');							--
+    PERFORM px.tunaLoad( stn, 'cats.opentool('||stn||')');							-- Forget the sample in the tool
+    PERFORM px.tunaLoad( stn, 'cats.closetool('||stn||')');							--
+    PERFORM px.tunaLoad( stn, 'cats.clearmemory('||stn||')');							-- Clear the memory, reset the parameters, and reset the motion
+    PERFORM px.tunaLoad( stn, 'cats.resetparameters('||stn||')');						--
+    PERFORM px.tunaLoad( stn, 'cats.resetmotion('||stn||')');							--
+    PERFORM px.tunaLoad( stn, 'px.kvset('||stn||',''robot.recoveryStatus'', ''Done'')');			-- Tell the user we are done
+    PERFORM px.tunaLoad( stn, 'px.kvset('||stn||',''robot.recovering'', ''0'')');				-- Lower the flag letting the UI know we are done
+    PERFORM px.tunaLoad( stn, 'RETURN');									-- End of program
+
+    PERFORM px.kvset( stn, 'robot.recovering', '1');								-- Flag for the user program to run "tunaStep"
+  END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+ALTER FUNCTION cats.recovery_back( int) OWNER TO lsadmin;
+
+
+CREATE OR REPLACE FUNCTION cats.recovery_failed_mount( stn int) returns void AS $$
+  DECLARE
+  BEGIN
+    PERFORM px.tunaLoadInit( stn);										-- initialize our tuna program
+    PERFORM px.tunaLoad( stn, 'px.kvset('||stn||',''robot.recovering'',    ''1'')');				-- Send status to the user
+    PERFORM px.tunaLoad( stn, 'px.kvset('||stn||',''robot.recoveryStatus'', ''Starting Recovery'')');
+    PERFORM px.tunaLoad( stn, 'px.kvset('||stn||',''robot.recoveryStatus'', ''Resetting Robot'')');		-- Start getting the robot into a known state
+    PERFORM px.tunaLoad( stn, 'cats.magnetoff('||stn||')');							-- Forget the sample mounted on the diffractometer
+    PERFORM px.tunaLoad( stn, 'cats.magneton('||stn||')');							--
+    PERFORM px.tunaLoad( stn, 'cats.opentool('||stn||')');							-- Forget the sample in the tool
+    PERFORM px.tunaLoad( stn, 'cats.closetool('||stn||')');							--
+    PERFORM px.tunaLoad( stn, 'cats.clearmemory('||stn||')');							-- Clear the memory, reset the parameters, and reset the motion
+    PERFORM px.tunaLoad( stn, 'cats.resetparameters('||stn||')');						--
+    PERFORM px.tunaLoad( stn, 'cats.resetmotion('||stn||')');							--
+    PERFORM px.tunaLoad( stn, 'px.kvset('||stn||',''robot.recoveryStatus'', ''Done'')');			-- Tell the user we are done
+    PERFORM px.tunaLoad( stn, 'px.kvset('||stn||',''robot.recovering'', ''0'')');				-- Lower the flag letting the UI know we are done
+    PERFORM px.tunaLoad( stn, 'RETURN');									-- End of program
+
+    PERFORM px.kvset( stn, 'robot.recovering', '1');								-- Flag for the user program to run "tunaStep"
+  END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+ALTER FUNCTION cats.recovery_failed_mount( int) OWNER TO lsadmin;
+
+CREATE OR REPLACE FUNCTION cats.recovery_stop( stn int) returns void AS $$
+  DECLARE
+  BEGIN
+    PERFORM cats.abort(stn);
+    PERFORM px.kvset( stn, 'robot.recovering', '0');
+    PERFORM px.kvset( stn, 'robot.recoverStatus', 'Stopped');
+  END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+ALTER FUNCTION cats.recovery_stop( int) OWNER TO lsadmin;
+
+
 --------
 
 CREATE OR REPLACE FUNCTION cats.barcode( theId int) returns int AS $$
@@ -2095,6 +2253,31 @@ ALTER FUNCTION cats.restart() OWNER TO lsadmin;
 -- Explicit station
 --
 -------------------------
+
+CREATE OR REPLACE FUNCTION cats.setdiffr( theStn int, theLid int, theSample int, theGripper int) returns void AS $$
+  SELECT cats._pushqueue( $1, 'setdiffr('||$2||','||$3||','||$4||')');
+$$ LANGUAGE SQL SECURITY DEFINER;
+ALTER FUNCTION cats.setdiffr(int, int, int, int) OWNER TO lsadmin;
+
+CREATE OR REPLACE FUNCTION cats.settool( theStn int, theLid int, theSample int, theGripper int) returns void AS $$
+  SELECT cats._pushqueue( $1, 'settool('||$2||','||$3||','||$4||')');
+$$ LANGUAGE SQL SECURITY DEFINER;
+ALTER FUNCTION cats.settool(int, int, int, int) OWNER TO lsadmin;
+
+CREATE OR REPLACE FUNCTION cats.clearmemory( theStn int) returns void AS $$
+  SELECT cats._pushqueue( $1, 'clear memory');
+$$ LANGUAGE SQL SECURITY DEFINER;
+ALTER FUNCTION cats.clearmemory( int) OWNER TO lsadmin;
+
+CREATE OR REPLACE FUNCTION cats.resetparameters( theStn int) returns void AS $$
+  SELECT cats._pushqueue( $1, 'reset parameters');
+$$ LANGUAGE SQL SECURITY DEFINER;
+ALTER FUNCTION cats.resetparameters( int) OWNER TO lsadmin;
+
+CREATE OR REPLACE FUNCTION cats.resetmotion( theStn int) returns void AS $$
+  SELECT cats._pushqueue( $1, 'resetMotion');
+$$ LANGUAGE SQL SECURITY DEFINER;
+ALTER FUNCTION cats.resetmotion( int) OWNER TO lsadmin;
 
 CREATE OR REPLACE FUNCTION cats.barcode( theStn bigint, theId int) returns int AS $$
   SELECT cats._mkcryocmd( $1, 'barcode', $2, 0, 0, 0, 0);
