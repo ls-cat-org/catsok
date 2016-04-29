@@ -138,7 +138,7 @@ CREATE OR REPLACE FUNCTION cats.setstate (
        defaultStatus boolean,		--  2
        toolNumber text,			--  3
        pathName text,			--  4
-       lidNumberOnTool integer,		--  5
+     lidNumberOnTool integer,		--  5
        sampleNumberOnTool integer,	--  6
        lidNumberMounted integer,	--  7
        sampleNumberMounted integer,	--  8
