@@ -2002,6 +2002,7 @@ ALTER FUNCTION cats.recovery_no_back( int) OWNER TO lsadmin;
 
 CREATE OR REPLACE FUNCTION cats.recovery_back( stn int) returns void AS $$
   DECLARE
+    nkill text;
   BEGIN
     PERFORM px.tunaLoadInit( stn);										-- initialize our tuna program
     PERFORM px.tunaLoad( stn, 'px.kvset('||stn||',''robot.recovering'',    ''1'')');				-- Send status to the user
@@ -2041,8 +2042,17 @@ CREATE OR REPLACE FUNCTION cats.recovery_back( stn int) returns void AS $$
     PERFORM px.tunaLoad( stn, 'cats.clearmemory('||stn||')');							-- Clear the memory, reset the parameters, and reset the motion
     PERFORM px.tunaLoad( stn, 'cats.resetparameters('||stn||')');						--
     PERFORM px.tunaLoad( stn, 'cats.resetmotion('||stn||')');							--
+
+    PERFORM px.tunaLoad( stn, 'px.kvset('||stn||',''robot.recoveryStatus'', ''Resetting pgpmac'')');
+
+    SELECT INTO nkill cnotifykill FROM px._config WHERE cstnkey=stn;
+    IF FOUND THEN
+      EXECUTE 'NOTIFY ' || nkill;
+    END IF;
+
     PERFORM px.tunaLoad( stn, 'px.kvset('||stn||',''robot.recoveryStatus'', ''Done'')');			-- Tell the user we are done
     PERFORM px.tunaLoad( stn, 'px.kvset('||stn||',''robot.recovering'', ''0'')');				-- Lower the flag letting the UI know we are done
+
     PERFORM px.tunaLoad( stn, 'RETURN');									-- End of program
 
     PERFORM px.kvset( stn, 'robot.recovering', '1');								-- Flag for the user program to run "tunaStep"
@@ -2254,6 +2264,25 @@ ALTER FUNCTION cats.restart() OWNER TO lsadmin;
 --
 -------------------------
 
+CREATE OR REPLACE FUNCTION cats.setmagoff( theStn int, dist numeric(6,3)) returns void AS $$
+  SELECT cats._pushqueue( $1, 'setmagoff('||dist||')');
+$$ LANGUAGE SQL SECURITY DEFINER;
+ALTER FUNCTION cats.setmagoff(int, numeric(6,3)) OWNER TO lsadmin;
+
+CREATE OR REPLACE FUNCTION cats.speedup( theStn int) returns void AS $$
+  SELECT cats._pushqueue( $1, 'remotespeedon');
+  SELECT cats._pushqueue( $1, 'speedup');
+  SELECT cats._pushqueue( $1, 'remotespeedoff');
+$$ LANGUAGE SQL SECURITY DEFINER;
+ALTER FUNCTION cats.speedup(int) OWNER TO lsadmin;
+
+CREATE OR REPLACE FUNCTION cats.speeddown( theStn int) returns void AS $$
+  SELECT cats._pushqueue( $1, 'remotespeedon');
+  SELECT cats._pushqueue( $1, 'speeddown');
+  SELECT cats._pushqueue( $1, 'remotespeedoff');
+$$ LANGUAGE SQL SECURITY DEFINER;
+ALTER FUNCTION cats.speeddown(int) OWNER TO lsadmin;
+
 CREATE OR REPLACE FUNCTION cats.setdiffr( theStn int, theLid int, theSample int, theGripper int) returns void AS $$
   SELECT cats._pushqueue( $1, 'setdiffr('||$2||','||$3||','||$4||')');
 $$ LANGUAGE SQL SECURITY DEFINER;
@@ -2328,7 +2357,6 @@ CREATE OR REPLACE FUNCTION cats.openlid2( theStn bigint) returns void AS $$
   SELECT cats._pushqueue( $1, 'openlid2');
 $$ LANGUAGE SQL SECURITY DEFINER;
 ALTER FUNCTION cats.openlid2( bigint) OWNER TO lsadmin;
-  
 
 CREATE OR REPLACE FUNCTION cats.openlid3( theStn bigint) returns void AS $$
   SELECT cats._pushqueue( $1, 'openlid3');
@@ -2344,7 +2372,6 @@ CREATE OR REPLACE FUNCTION cats.closelid2( theStn bigint) returns void AS $$
   SELECT cats._pushqueue( $1, 'closelid2');
 $$ LANGUAGE SQL SECURITY DEFINER;
 ALTER FUNCTION cats.closelid2( bigint) OWNER TO lsadmin;
-  
 
 CREATE OR REPLACE FUNCTION cats.closelid3( theStn bigint) returns void AS $$
   SELECT cats._pushqueue( $1, 'closelid3');
@@ -2352,8 +2379,6 @@ $$ LANGUAGE SQL SECURITY DEFINER;
 ALTER FUNCTION cats.closelid3( bigint) OWNER TO lsadmin;
 
 ---
-
-
 
 CREATE OR REPLACE FUNCTION cats.opentool( theStn bigint) returns void AS $$
   SELECT cats._pushqueue( $1, 'opentool');
@@ -2395,7 +2420,6 @@ CREATE OR REPLACE FUNCTION cats.reguloff( theStn bigint) returns void AS $$
 $$ LANGUAGE SQL SECURITY DEFINER;
 ALTER FUNCTION cats.reguloff( bigint) OWNER TO lsadmin;
 
-
 CREATE OR REPLACE FUNCTION cats.warmon( theStn bigint) returns void AS $$
   SELECT cats._pushqueue( $1, 'warmon');
 $$ LANGUAGE SQL SECURITY DEFINER;
@@ -2405,7 +2429,6 @@ CREATE OR REPLACE FUNCTION cats.warmoff( theStn bigint) returns void AS $$
   SELECT cats._pushqueue( $1, 'warmoff');
 $$ LANGUAGE SQL SECURITY DEFINER;
 ALTER FUNCTION cats.warmoff( bigint) OWNER TO lsadmin;
-
 
 CREATE OR REPLACE FUNCTION cats.on( theStn bigint) returns void AS $$
   SELECT cats._pushqueue( $1, 'on');
