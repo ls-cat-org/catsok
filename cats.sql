@@ -1990,6 +1990,7 @@ CREATE OR REPLACE FUNCTION cats.recovery_no_back( stn int) returns void AS $$
     PERFORM px.tunaLoad( stn, 'cats.clearmemory('||stn||')');							-- Clear the memory, reset the parameters, and reset the motion
     PERFORM px.tunaLoad( stn, 'cats.resetparameters('||stn||')');						--
     PERFORM px.tunaLoad( stn, 'cats.resetmotion('||stn||')');							--
+    PERFORM px.tunaLoad( stn, 'px.kvset('||stn||',''robot.airRights'',''False'')');
     PERFORM px.tunaLoad( stn, 'px.kvset('||stn||',''robot.recoveryStatus'', ''Done'')');			-- Tell the user we are done
     PERFORM px.tunaLoad( stn, 'px.kvset('||stn||',''robot.recovering'', ''0'')');				-- Lower the flag letting the UI know we are done
     PERFORM px.tunaLoad( stn, 'RETURN');									-- End of program
@@ -2050,6 +2051,7 @@ CREATE OR REPLACE FUNCTION cats.recovery_back( stn int) returns void AS $$
       EXECUTE 'NOTIFY ' || nkill;
     END IF;
 
+    PERFORM px.tunaLoad( stn, 'px.kvset('||stn||',''robot.airRights'',''False'')');
     PERFORM px.tunaLoad( stn, 'px.kvset('||stn||',''robot.recoveryStatus'', ''Done'')');			-- Tell the user we are done
     PERFORM px.tunaLoad( stn, 'px.kvset('||stn||',''robot.recovering'', ''0'')');				-- Lower the flag letting the UI know we are done
 
@@ -2075,6 +2077,7 @@ CREATE OR REPLACE FUNCTION cats.recovery_failed_mount( stn int) returns void AS 
     PERFORM px.tunaLoad( stn, 'cats.clearmemory('||stn||')');							-- Clear the memory, reset the parameters, and reset the motion
     PERFORM px.tunaLoad( stn, 'cats.resetparameters('||stn||')');						--
     PERFORM px.tunaLoad( stn, 'cats.resetmotion('||stn||')');							--
+    PERFORM px.tunaLoad( stn, 'px.kvset('||stn||',''robot.airRights'',''False'')');
     PERFORM px.tunaLoad( stn, 'px.kvset('||stn||',''robot.recoveryStatus'', ''Done'')');			-- Tell the user we are done
     PERFORM px.tunaLoad( stn, 'px.kvset('||stn||',''robot.recovering'', ''0'')');				-- Lower the flag letting the UI know we are done
     PERFORM px.tunaLoad( stn, 'RETURN');									-- End of program
