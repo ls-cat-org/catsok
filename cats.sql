@@ -2273,16 +2273,16 @@ $$ LANGUAGE SQL SECURITY DEFINER;
 ALTER FUNCTION cats.setmagoff(int, numeric(6,3)) OWNER TO lsadmin;
 
 CREATE OR REPLACE FUNCTION cats.speedup( theStn int) returns void AS $$
-  SELECT cats._pushqueue( $1, 'remotespeedon');
-  SELECT cats._pushqueue( $1, 'speedup');
-  SELECT cats._pushqueue( $1, 'remotespeedoff');
+  SELECT cats._pushqueue( $1, 'remotespeedon',  now(), NULL, NULL);
+  SELECT cats._pushqueue( $1, 'speedup',        now()+'0.2 seconds', NULL, NULL);
+  SELECT cats._pushqueue( $1, 'remotespeedoff', now()+'0.4 seconds', NULL, NULL);
 $$ LANGUAGE SQL SECURITY DEFINER;
 ALTER FUNCTION cats.speedup(int) OWNER TO lsadmin;
 
 CREATE OR REPLACE FUNCTION cats.speeddown( theStn int) returns void AS $$
-  SELECT cats._pushqueue( $1, 'remotespeedon');
-  SELECT cats._pushqueue( $1, 'speeddown');
-  SELECT cats._pushqueue( $1, 'remotespeedoff');
+  SELECT cats._pushqueue( $1, 'remotespeedon',  now(), NULL, NULL);
+  SELECT cats._pushqueue( $1, 'speeddown',        now()+'0.2 seconds', NULL, NULL);
+  SELECT cats._pushqueue( $1, 'remotespeedoff', now()+'0.4 seconds', NULL, NULL);
 $$ LANGUAGE SQL SECURITY DEFINER;
 ALTER FUNCTION cats.speeddown(int) OWNER TO lsadmin;
 
