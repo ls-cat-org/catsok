@@ -610,6 +610,7 @@ class CatsOk:
         runFlag = True
         print "starting run"
         self.pushCmd( "vdi90off")
+        self.redis.set( "robot.airRights", False)
         lastDbTime = datetime.datetime.now()
 
         #
