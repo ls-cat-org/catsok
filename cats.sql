@@ -1256,6 +1256,7 @@ CREATE OR REPLACE FUNCTION cats._pushqueue( theStn bigint, cmd text, startTime t
     c text;	    -- trimmed command
     ntfy text;	    -- used to generate notify command
     theRobot inet;  -- address of CatsOk routine
+    
   BEGIN
     SELECT cnotifyrobot, crobot INTO ntfy, theRobot FROM px._config LEFT JOIN px.stations ON cstation=stnname WHERE stnkey=theStn;
     IF NOT FOUND THEN
@@ -1277,7 +1278,6 @@ CREATE OR REPLACE FUNCTION cats._pushqueue( theStn bigint, cmd text, startTime t
         INSERT INTO cats._queue (qcmd, qaddr, qStart, qpath, qtool) VALUES (c, theRobot, startTime, thePath, theTool);
       END IF;
 
-
       IF FOUND THEN
         EXECUTE 'NOTIFY ' || ntfy;
       ELSE
@@ -1287,7 +1287,7 @@ CREATE OR REPLACE FUNCTION cats._pushqueue( theStn bigint, cmd text, startTime t
     RETURN;
   END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
-ALTER FUNCTION cats._pushqueue( text, timestamp with time zone, text, int) OWNER TO lsadmin;
+ALTER FUNCTION cats._pushqueue( bigint, text, timestamp with time zone, text, int) OWNER TO lsadmin;
 
 drop type cats.popqueuetype cascade;
 
@@ -1297,6 +1297,7 @@ CREATE OR REPLACE FUNCTION cats._popqueue() RETURNS cats.popqueuetype AS $$
   DECLARE
     rtn cats.popqueuetype;	-- return value
     qk   bigint;		-- queue key of item
+
   BEGIN
     rtn.cmd := '';
     SELECT   qCmd,    qKey, extract(epoch from qStart)::float, qpath,      qtool
@@ -1310,6 +1311,7 @@ CREATE OR REPLACE FUNCTION cats._popqueue() RETURNS cats.popqueuetype AS $$
       return rtn;
     END IF;
     DELETE FROM cats._queue WHERE qKey=qk;
+
     return rtn;
   END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
@@ -2453,6 +2455,10 @@ CREATE OR REPLACE FUNCTION cats.reset( theStn bigint) returns void AS $$
 $$ LANGUAGE SQL SECURITY DEFINER;
 ALTER FUNCTION cats.reset( bigint) OWNER TO lsadmin;
 
+CREATE OR REPLACE FUNCTION cats.backup( theStn bigint) returns void AS $$
+  SELECT cats._pushqueue( $1, 'backup(100)');
+$$ LANGUAGE SQL SECURITY DEFINER;
+ALTER FUNCTION cats.backup( bigint) OWNER TO lsadmin;
 
 CREATE OR REPLACE FUNCTION cats.panic( theStn bigint) returns void AS $$
   SELECT cats._pushqueue( $1, 'panic');
