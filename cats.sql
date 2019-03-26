@@ -2593,6 +2593,9 @@ CREATE OR REPLACE FUNCTION cats.cmdTimingDone() returns void as $$
                                  and ctool=theTool
                                  and ctpath=thePath
                                  and ctdone is not null
+                                 and ctneedair is not null
+                                 and ctnoair is not null
+                                 and ctstart is not null
                                ORDER BY ctkey DESC
                                LIMIT 10);
 
