@@ -846,7 +846,7 @@ class CatsOk:
             # check if the robot and the MD2 (or the camera cap detector) agree
             #
             if ms == "t" and (self.sampleMounted["lid"] == "" or self.sampleMounted["sample"] == ""):
-                print "It looks to me like there is a  sample on diffractometer but robot thinks there isn't one"
+                print "It looks to me like there is a sample on diffractometer but robot thinks there isn't one"
 
                 self.pushCmd( "panic")
                 if not self.inRecoveryMode:
