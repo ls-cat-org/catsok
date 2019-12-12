@@ -1,8 +1,7 @@
-VERSION= 1.2
+VERSION= 1.3
 
 install:
 	install -p --mode=755 CatsOk.py /usr/local/bin
-	install -p --mode=644 CatsOkScreenrc /usr/local/etc
 
 dist:
 	ln -fs . CatsOk-$(VERSION)

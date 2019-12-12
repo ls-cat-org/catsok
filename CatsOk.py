@@ -649,7 +649,7 @@ class CatsOk:
                 self.redis.set( "robot.airRights", "Requested")
                 qr = self.db.query( qs)
                 rslt = qr.dictresult()[0]["rslt"]
-                if rslt == "t":
+                if rslt:
                     self.haveAirRights = True
                     self.pushCmd( "vdi90on", datetime.datetime.now())
                     self.redis.set( "robot.airRights", True)
@@ -837,15 +837,15 @@ class CatsOk:
             # But be sure to comment this part too
             #
             if self.redis.get( "capDetected") == "1":
-                ms = 't'
+                ms = True
             else:
-                ms = 'f'
+                ms = False
             
 
             #
             # check if the robot and the MD2 (or the camera cap detector) agree
             #
-            if ms == "t" and (self.sampleMounted["lid"] == "" or self.sampleMounted["sample"] == ""):
+            if ms and (self.sampleMounted["lid"] == "" or self.sampleMounted["sample"] == ""):
                 print "It looks to me like there is a sample on diffractometer but robot thinks there isn't one"
 
                 self.pushCmd( "panic")
