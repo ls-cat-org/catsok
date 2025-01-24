@@ -466,8 +466,6 @@ class CatsOk:
             # Assume we have the full response
             self.waiting = False
 
-            #print "Status Received:", newStr.strip()
-
             #
             # add what we have from what was left over from last time
             str = self.t2Input + newStr
@@ -497,7 +495,6 @@ class CatsOk:
         if event & select.POLLOUT:
             s = self.popStatus()
             if s != None:
-                #print "status request: ", s
                 self.t2.send( s + self.termstr)
 
         return True
@@ -613,7 +610,6 @@ class CatsOk:
         self.redis.set( "robot.airRights", False)
         lastDbTime = datetime.datetime.now()
 
-        #
         # initialize the cap detector
         if self.redis.get( "capDetected") == "1":
             self.capDetected = True
@@ -631,7 +627,6 @@ class CatsOk:
 
 
             if runFlag and not self.waiting:
-                #
                 # queue up new requests if it is time to
                 for k in self.srqst.keys():
                     r = self.srqst[k]
@@ -656,8 +651,10 @@ class CatsOk:
                     print "received haveAirRights and setting vdi90on"
 
             if runFlag and not self.needAirRights and self.haveAirRights:
+                # Drop air rights and notify thru postgres that the sample is
+                # ready.
                 self.redis.set( "robot.airRights", "Returning")
-                self.db.query( "select px.dropRobotAirRights()")    # drop rights and send notify that sample is ready (if it is)
+                self.db.query( "select px.dropRobotAirRights()")
                 self.pushCmd( "vdi90off")
                 self.haveAirRights = False
                 self.redis.set( "robot.airRights", False)
@@ -818,54 +815,33 @@ class CatsOk:
                 self.pushCmd( "vdi92off")
 
         #
-        # Check if the magnet state makes sense
+        # Check if the magnet state makes sense. The smart magnet functionality
+        # was removed long ago, make sure the magnet is disabled. 
         #
-
         if dismountSampleCheckDelaySeconds != None and self.checkMountedSample and pathName != 'get' and (datetime.datetime.now() - self.sampleMounted["timestamp"] > datetime.timedelta(0,dismountSampleCheckDelaySeconds)):
             self.checkMountedSample = False
-
-            #
-            # Uncomment this if you want to go back to the smart magnet detector
-            #
-
-            # qr = self.db.query( "select px.getmagnetstate() as ms")
-            # ms = qr.dictresult()[0]["ms"]
-            # print "Sample Mounted: ", ms
-            # print self.sampleMounted
-
-            #
-            # But be sure to comment this part too
-            #
             if self.redis.get( "capDetected") == "1":
                 ms = True
             else:
                 ms = False
             
-
-            #
-            # check if the robot and the MD2 (or the camera cap detector) agree
-            #
+            # Check if the robot and the MD2 (or the camera cap detector) agree
             if ms and (self.sampleMounted["lid"] == "" or self.sampleMounted["sample"] == ""):
                 print "It looks to me like there is a sample on diffractometer but robot thinks there isn't one"
 
                 self.pushCmd( "panic")
                 if not self.inRecoveryMode:
                     self.inRecoveryMode = True
-                    # self.db.query( "select cats.recover_dismount_failure()")
                 else:
                     self.needAirRights = False
                     self.inRecoveryMode = False
 
     def statusDoParse( self, s):
         self.srqst["do"]["rcvdCnt"] = self.srqst["do"]["rcvdCnt"] + 1
-        #print "do:", s
         do = s[s.find("(")+1:s.find(")")]
         if do[0] != "1" and do[0] != "0":
             print "Bad 'do' returned: %s" % (do)
             return
-        #else:
-        #    qs = "select cats.setdo( b'%s'::bit(55))" % (do)
-        #    self.db.query( qs)
 
         # Calculate Pr2 (robot air rights request)
         lastPr2 = self.Pr2
@@ -897,9 +873,6 @@ class CatsOk:
     def statusDiParse( self, s):
         self.srqst["di"]["rcvdCnt"] = self.srqst["di"]["rcvdCnt"] + 1
         di = s[s.find("(")+1:s.find(")")]
-        # 111100010000000000000000011000000001110000000000000000000000000000000000000000000101101110000000000
-        #qs = "select cats.setdi( b'%s')" % (di)
-        #self.db.query( qs)
 
         self.diES  = di[1] == "1"
         self.redis.set( "robot.emergencyStop", self.diES)
@@ -945,9 +918,11 @@ class CatsOk:
         self.redis.set( "robot.pucksDetected", self.pucksDetected);
 
     def statusPositionParse( self, s):
+        # Note: we do not call cats.setposition() in postgres, presumably
+        # because we read the actual position from the robot itself in real
+        # time.
         self.srqst["position"]["rcvdCnt"] = self.srqst["position"]["rcvdCnt"] + 1
         if self.statusPositionLast != None and self.statusPositionLast == s:
-            #self.db.query( "select cats.setposition()")
             return
 
         # One line command to an argument list
@@ -955,11 +930,7 @@ class CatsOk:
 
         if len(a) != 6:
             raise CatsOkError( 'Wrong number of arguments received in status state response: got %d, exptected 14' % (len(a)))
-        #                               0   1   2   3   4  5
-        #qs = "select cats.setposition( %s, %s, %s, %s, %s, %s)" %  ( a[0], a[1], a[2], a[3], a[4], a[5])
-        #self.db.query( qs)
         self.statusPositionLast = s
-        # print a[0],a[1],a[2],a[3],a[4],a[5]
 
         #
         # See if we are in the 300mm exclusion zone
@@ -1026,12 +997,8 @@ class CatsOk:
     def statusMessageParse( self, s):
         self.srqst["message"]["rcvdCnt"] = self.srqst["message"]["rcvdCnt"] + 1
         if self.statusMessageLast != None and self.statusMessageLast == s:
-            #self.db.query( "select cats.setmessage()")
-            #self.db.query( "execute message_noArgs")
             return
 
-        #qs = "select cats.setmessage( '%s')" % (s)
-        #self.db.query( qs)
         self.statusMessageLast = s
 
         
