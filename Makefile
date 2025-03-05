@@ -1,9 +1,7 @@
-VERSION= 1.3
+VERSION= 1.4
 
 install:
-	install -p --mode=755 CatsOk.py /usr/local/bin
-
-dist:
-	ln -fs . CatsOk-$(VERSION)
-	tar czvf CatsOk-$(VERSION).tar.gz CatsOk-$(VERSION)/CatsOk.py CatsOk-$(VERSION)/CatsOk CatsOk-$(VERSION)/CatsOkScreenrc CatsOk-$(VERSION)/Makefile
-	rm -f CatsOk-$(VERSION)
+	mkdir -m 0755 -p /var/log/lscat
+	install -m 0755 CatsOk.py /usr/local/bin
+	install -m 0644 CatsOk.service /usr/lib/systemd/system
+	systemctl enable CatsOk.service

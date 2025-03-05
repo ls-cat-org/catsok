@@ -1,0 +1,16 @@
+[Unit]
+Description=Runs the CATS robot controls for LS-CAT
+After=network-online.target
+
+[Service]
+ExecStart=/usr/bin/python2 /usr/local/bin/CatsOk.py
+Environment="PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+Environment="PYTHONUNBUFFERED=1"
+Restart=on-failure
+Type=exec
+User=ioc
+StandardOutput=file:/var/log/lscat/CatsOk.log
+StandardError=file:/var/log/lscat/CatsOk.log
+
+[Install]
+WantedBy=multi-user.target
