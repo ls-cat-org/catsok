@@ -9,5 +9,5 @@ build:
 install:
 	mkdir -m 0755 -p /var/log/lscat
 	install -m 0755 CatsOk.py /usr/local/bin
-	install -m 0644 catsok.service /etc/systemd/system
+	install -m 0644 catsok.service /lib/systemd/system
 	@echo "catsok is installed, please run 'systemctl enable --now catsok.service' when you are ready to run it."
