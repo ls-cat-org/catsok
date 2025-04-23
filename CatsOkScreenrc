@@ -1,8 +1,0 @@
-multiuser on
-aclumask "*"+rwx "??"+rwx "?"+rwx lsioc+rwx ioc+rwx
-
-shell /bin/bash
-screen -t CatsOk 0 /usr/local/bin/CatsOk.py
-
-title CatsOk
-sessionname CatsOk
