@@ -792,7 +792,7 @@ class CatsOk:
 
             if not self.haveAirRights:
                 # Nab air rights when we embark on a path requiring them
-                if pathName in pathsNeedingAirRights:
+                if pathName in self.pathsNeedingAirRights:
                     print "  Need air rights needed for path '%s'" % (pathName)
                     self.needAirRights = True
                 else:
