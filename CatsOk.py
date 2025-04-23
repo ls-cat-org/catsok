@@ -206,9 +206,9 @@ class CatsOk:
     oldPushCmd = None
     inRecoveryMode = False
     workingPath = ""    # path we are currently running
-    pathsNeedingAirRights = [
+    pathsNeedingAirRights = {
         "put", "put_bcrd", "get", "getput", "getput_bcrd", "test"
-        ]
+    }
 
     sampleMounted = { "lid" : None, "sample" : None, "timestamp" : None}
     sampleTooled  = { "lid" : None, "sample" : None, "timestamp" : None}
@@ -216,7 +216,6 @@ class CatsOk:
     capDetected   = None
 
     dbFlag       = True        # indicates a command might still be in the queue
-    lastPathName  = ""
     cryoLocked = None
     needAirRights = False
     haveAirRights = False
@@ -394,28 +393,24 @@ class CatsOk:
                     return True
 
                 #
-                # does this look like a normal path command that we might want to delay?
+                # Does this look like a normal path command that we might want to delay?
                 #
                 if cmd.find( "(") > 0:
-                    try:
-                        # Pick off the path name and test it against those needing air rights:
-                        #  We'll need a second list of commands to test if we ever want to call one that does not need air rights
-                        ndx = self.pathsNeedingAirRights.index( path)
-                    except ValueError:
-                        #
-                        # No path found: just push the command and hope for the best
-                        self.pushCmd( cmd, startTime, path, tool)
-                        self.workingPath = cmd
-                    else:
-                        #
-                        # We found one: save it for later if we are busy now
-                        #
+                    # Pick off the path name and test it against those needing air rights:
+                    # We'll need a second list of commands to test if we ever want to call
+                    # one that does not need air rights
+                    if path in self.pathsNeedingAirRights:
+                        # We found one: save it for later if we are busy now.
                         if self.workingPath != "":
                             self.afterCmd.append((cmd, startTime, path, tool))
                             print "Saving Command: ", cmd
                         else:
                             self.pushCmd( cmd, startTime, path, tool)
                             self.workingPath = cmd
+                    else:
+                        # No path found: just push the command and hope for the best
+                        self.pushCmd( cmd, startTime, path, tool)
+                        self.workingPath = cmd
                 else:
                     self.pushCmd( cmd, startTime, path, tool)
                     self.workingPath = cmd
@@ -473,7 +468,8 @@ class CatsOk:
             # Assume we have the full response
             self.waiting = False
 
-            #print "Status Received:", newStr.strip()
+            # This message can get noisy, but we might need it.
+            print "status msg received from robot: ", newStr.strip()
 
             #
             # add what we have from what was left over from last time
@@ -784,27 +780,26 @@ class CatsOk:
 
 
         pathName = a[4]
-        self.workingPath = pathName
-
-        # mark the end of a path
-        if len(self.lastPathName)>0 and self.lastPathName != pathName:
-            self.db.query( "select cats.cmdTimingDone()")
-
-        # Nab air rights when we embark on a path requiring them
-        if self.lastPathName != pathName and not self.haveAirRights:
-            try:
-                ndx = self.pathsNeedingAirRights.index(pathName)
-            except ValueError:
-                self.needAirRights = False
-                if pathName != "":
-                    print "Current path '%s' does not need air rights" % (pathName)
-                else:
-                    print "No path running"
+        if pathName != self.workingPath:
+            if self.workingPath == "":
+                print "Current working path is '%s'" % (pathName)
+            elif pathName == "":
+                print "Path '%s' is done" % (self.workingPath)
+                self.db.query( "select cats.cmdTimingDone()")
             else:
-                print "Need Air Rights for path '%s'" % (pathName)
-                self.needAirRights = True
+                print "Robot aborted path '%s', new current working path is '%s'" % (self.workingPath, pathName)
+                self.db.query( "select cats.cmdTimingDone()")
 
-        self.lastPathName = pathName
+            if not self.haveAirRights:
+                # Nab air rights when we embark on a path requiring them
+                if pathName in pathsNeedingAirRights:
+                    print "  Need air rights needed for path '%s'" % (pathName)
+                    self.needAirRights = True
+                else:
+                    print "  Air rights not needed for path '%s'" % (pathName)
+                    self.needAirRights = False
+            
+            self.workingPath = pathName
 
         #
         # Give up air rights when not moving and not in the exclusion zone
@@ -816,6 +811,11 @@ class CatsOk:
         #
         # set the cap detector flag
         #
+        # TODO: uncomment this once we know it works:
+        # For "put" commands, we can assume there is no sample mounted because
+        # if there were, "put" would have failed already.
+        #
+        #if self.redis.get( "capDetected") == "1" or (self.workingPath == "put" and self.inExclusionZone):
         if self.redis.get( "capDetected") == "1":
             if not self.capDetected:
                 self.capDetected = True
@@ -844,6 +844,7 @@ class CatsOk:
             #
             # But be sure to comment this part too
             #
+            capDetected = self.redis.get("capDetected") == "1"
             if self.redis.get( "capDetected") == "1":
                 ms = True
             else:
