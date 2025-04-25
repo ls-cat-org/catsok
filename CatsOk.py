@@ -37,7 +37,6 @@
 #      in the LN2 AND before it picks up the next sample.  Use this
 #      when the video cap detector is used.  This timing is not as
 #      strict as the first case.
-#
 #   3) Set to "None".  Use this when VDI92 is configured in the CATS
 #      code to do its own cap check at a place in the path where it
 #      makes sense to do so.
@@ -252,7 +251,10 @@ class CatsOk:
 
     statusStateLast    = None
     statusIoLast       = None
+    statusDiLast       = None
+    statusDoLast       = None
     statusPositionLast = None
+    statusConfigLast   = None
     statusMessageLast  = None
     waiting = False     # true when the last status reponse did not contain an entire message (more to come)
                         #
@@ -341,7 +343,7 @@ class CatsOk:
             if self.cmdQueue[0][1] <= datetime.datetime.now():
                 if self.cmdQueue[0][2] != None:
                     tool = int(self.cmdQueue[0][3])
-                    qs = "select cats.cmdTimingStart( '%s', %d)" % (self.cmdQueue[0][2], tool)
+                    qs = "seLect cats.cmdTimingStart( '%s', %d)" % (self.cmdQueue[0][2], tool)
                     self.db.query( qs)
                 rtn = self.cmdQueue.pop(0)[0]
         else:
@@ -467,9 +469,6 @@ class CatsOk:
 
             # Assume we have the full response
             self.waiting = False
-
-            # This message can get noisy, but we might need it.
-            print "status msg received from robot: ", newStr.strip()
 
             #
             # add what we have from what was left over from last time
@@ -671,6 +670,9 @@ class CatsOk:
 
     def statusStateParse( self, s):
         self.srqst["state"]["rcvdCnt"] = self.srqst["state"]["rcvdCnt"] + 1
+        if s and s != self.statusStateLast:
+            self.statusStateLast = s
+            print 'status update "state" from robot: %s' % (s)
 
         # One line command to an argument list
         a = s[s.find("(")+1 : s.find(")")].split(',')
@@ -700,7 +702,6 @@ class CatsOk:
 
 
         if len(a) != 20:
-            print "statusStateParse(%s)" % (s)
             raise CatsOkError( 'Wrong number of arguments received in status state response: got %d, exptected 20' % (len(a)))
         #                            0            1            2             3           4          5   6   7   8   9  10   11         12           13           14
 
@@ -867,7 +868,10 @@ class CatsOk:
 
     def statusDoParse( self, s):
         self.srqst["do"]["rcvdCnt"] = self.srqst["do"]["rcvdCnt"] + 1
-        #print "do:", s
+        if s and s != self.statusDoLast:
+            self.statusDoLast = s
+            print 'status update "do" from robot: %s' % (s)
+        
         do = s[s.find("(")+1:s.find(")")]
         if do[0] != "1" and do[0] != "0":
             print "Bad 'do' returned: %s" % (do)
@@ -903,8 +907,17 @@ class CatsOk:
                 self.redis.set( "robot.cryoLocked", True)
 
 
+    def statusIoParse(self, s):
+        if s and s != self.statusIoLast:
+            self.statusIoLast = s
+            print 'status update "io" from robot: %s' % (s)
+        
     def statusDiParse( self, s):
         self.srqst["di"]["rcvdCnt"] = self.srqst["di"]["rcvdCnt"] + 1
+        if s and s != self.statusDiLast:
+            self.statusDiLast = s
+            print 'status update "di" from robot: %s' % (s)
+        
         di = s[s.find("(")+1:s.find(")")]
         # 111100010000000000000000011000000001110000000000000000000000000000000000000000000101101110000000000
         #qs = "select cats.setdi( b'%s')" % (di)
@@ -956,9 +969,9 @@ class CatsOk:
     def statusPositionParse( self, s):
         self.srqst["position"]["rcvdCnt"] = self.srqst["position"]["rcvdCnt"] + 1
         if self.statusPositionLast != None and self.statusPositionLast == s:
-            #self.db.query( "select cats.setposition()")
             return
 
+        print 'status update "position" from robot: %s' % (s)
         # One line command to an argument list
         a = s[s.find("(")+1 : s.find(")")].split(',')
 
@@ -1030,18 +1043,15 @@ class CatsOk:
                 self.catsExclusionZone = False
 
     def statusConfigParse( self, s):
-        pass
+        if s and s != self.statusConfigLast:
+            self.statusConfigLast = s
+            print 'status update "config" from robot: %s' % (s)
     
     def statusMessageParse( self, s):
         self.srqst["message"]["rcvdCnt"] = self.srqst["message"]["rcvdCnt"] + 1
-        if self.statusMessageLast != None and self.statusMessageLast == s:
-            #self.db.query( "select cats.setmessage()")
-            #self.db.query( "execute message_noArgs")
-            return
-
-        #qs = "select cats.setmessage( '%s')" % (s)
-        #self.db.query( qs)
-        self.statusMessageLast = s
+        if s and s != self.statusMessageLast:
+            self.statusMessageLast = s
+            print 'status update "message" from robot: %s' % (s)
 
         
 
